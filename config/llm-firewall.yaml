@@ -1,0 +1,200 @@
+# llm-firewall example configuration.
+#
+# Installed by `llmfw-setup install` to:
+#   ~/Library/Application Support/llm-firewall/llm-firewall.yaml
+# The proxy and the collector both read this one file. The proxy reads `proxy`,
+# `scope`, `clients`, `certs`, `capture`, `ipc`, `metadata_log`. The collector reads
+# `ipc`, `collector`, `detect`, `store`.
+#
+# A leading "~/" is expanded to the current user's home directory. There are no
+# secrets in this file. Keys are never listed here, only the paths to them.
+
+version: 1
+
+# ---------------------------------------------------------------------------
+# Data plane (llmfw-proxy)
+# ---------------------------------------------------------------------------
+proxy:
+  # Loopback only. The proxy refuses to start on any non-loopback address.
+  listen_address: 127.0.0.1
+  # The PAC file, the launcher (HTTPS_PROXY) and this setting must agree. `llmfw-setup`
+  # templates this port into all three.
+  listen_port: 18443
+  # Boost.Asio io_context worker threads.
+  io_threads: 2
+  # A connection is closed after this long with no bytes in either direction.
+  idle_timeout_ms: 300000        # SSE replies can be quiet for long stretches.
+  # "metadata_only" = phase 0: no bodies are captured, and records go to metadata_log.
+  # "full"          = phase 1: bodies are captured (capped) and sent to the collector socket.
+  mode: metadata_only
+  # ALPN protocols offered to the CLIENT on decrypted connections. Phase 0 is HTTP/1.1
+  # only. Adding "h2" needs the planned nghttp2 HttpSession (not implemented).
+  client_alpn: ["http/1.1"]
+  upstream:
+    connect_timeout_ms: 10000
+    tls_handshake_timeout_ms: 10000
+    # "system" = macOS Security.framework trust evaluation (login + system keychains).
+    # Strict: a chain or hostname failure never falls back to "insecure". The
+    # connection is blind-tunneled instead, and the client verifies for itself.
+    trust: system
+  # When a client aborts OUR TLS handshake for a host (e.g. the CA is no longer
+  # trusted), that host is blind-tunneled for this long. Claude keeps working and
+  # the event is counted.
+  client_tls_breaker_cooldown_ms: 600000
+
+# Hosts that are decrypted. Every other CONNECT target is blind-tunneled (bytes are
+# relayed and never decrypted). "*.x" matches any subdomain of x (one or more labels)
+# and does not match x itself. Only port 443 is ever decrypted.
+scope:
+  decrypt_hosts:
+    - claude.ai
+    - "*.claude.ai"
+    - anthropic.com
+    - "*.anthropic.com"
+
+# Rules that assign a client path from the User-Agent. The first match wins, and no
+# match means UNKNOWN. Web browser support is added later by adding a rule here
+# (e.g. path: WEB), without code changes. Phase 0 must confirm these substrings.
+clients:
+  - path: CLAUDE_CODE
+    user_agent_contains: ["claude-cli/", "claude-code/"]
+  - path: UI
+    user_agent_contains: ["Electron/", "Claude/"]
+  # - path: VM            # Filled in after phase 0 identifies the Cowork VM UA.
+  #   user_agent_contains: []
+
+certs:
+  # Holds the CA certificate (public, used for NODE_EXTRA_CA_CERTS) and the leaf
+  # certificate and key. The directory is 0700 and the key is 0600. There is no CA
+  # private key here, because setup destroys it.
+  dir: "~/Library/Application Support/llm-firewall/certs"
+  ca_cert_file: ca.pem
+  leaf_cert_file: leaf.pem
+  leaf_key_file: leaf.key
+
+capture:
+  # Bounded in-memory queue between the I/O threads and the writer thread. When
+  # either limit is reached, new captures are DROPPED and counted. Traffic is never
+  # blocked.
+  queue_max_items: 1024
+  queue_max_bytes: 268435456             # 256 MiB
+  # Per-body caps. Bytes beyond the cap are still forwarded but not captured, and
+  # Body.truncated is set.
+  request_body_cap_bytes: 16777216       # 16 MiB (covers most file uploads)
+  response_body_cap_bytes: 8388608       # 8 MiB  (a full SSE reply stream)
+  websocket_message_cap_bytes: 1048576   # 1 MiB
+  # Header values that are removed before the capture leaves the I/O thread.
+  # Matching ignores case. Only the name and the original value length are kept.
+  redact_headers:
+    - cookie
+    - set-cookie
+    - authorization
+    - proxy-authorization
+    - x-api-key
+    - anthropic-api-key
+
+ipc:
+  # The directory must be owned by the current user with mode 0700. Both sides
+  # check this and refuse to use it otherwise. macOS limits the full socket path to
+  # 103 bytes, and setup fails early if the expanded path is longer.
+  socket_dir: "~/Library/Application Support/llm-firewall/run"
+  socket_name: capture.sock
+  # Largest frame accepted by the collector. Must be at least the largest body cap
+  # plus about 64 KiB of headroom for headers and metadata.
+  max_frame_bytes: 20971520              # 20 MiB
+  reconnect_backoff_initial_ms: 250
+  reconnect_backoff_max_ms: 10000
+  stats_interval_ms: 30000
+
+# Phase 0 only (used when proxy.mode = metadata_only).
+metadata_log:
+  path: "~/Library/Logs/llm-firewall/phase0-metadata.jsonl"
+  rotate_bytes: 52428800                 # 50 MiB per file
+  keep_files: 5
+  # Header VALUES that may appear in the metadata log. All other headers are logged
+  # by name only.
+  logged_header_values: ["content-type", "content-length", "content-encoding", "user-agent", "upgrade"]
+
+# ---------------------------------------------------------------------------
+# Analysis (collector, Java)
+# ---------------------------------------------------------------------------
+collector:
+  # CPU workers that parse, label and detect. Receive and store each run on their own single thread.
+  worker_threads: 2
+  # Bounded hand-off from the receiver to the workers. When it is full, the receiver
+  # stops reading, so drops happen and are counted at the proxy.
+  work_queue_capacity: 256
+  # Largest body after decompression. Stops decompression bombs.
+  max_decoded_body_bytes: 67108864       # 64 MiB
+  # Jackson stream limits for untrusted JSON.
+  json_max_nesting_depth: 200
+  json_max_string_length: 33554432       # 32 MiB
+  tika:
+    # Tika runs in forked child JVMs (ForkParser), never inside the collector process.
+    pool_size: 2
+    child_max_heap_mb: 512
+    parse_timeout_ms: 30000
+    max_extracted_chars: 2000000
+  # (host, method, path template, segment hash) keys already scanned are skipped,
+  # so histories that are re-sent each turn (Claude Code) are not re-reported.
+  dedup_cache_entries: 100000
+
+detect:
+  pii:
+    # Built-in RE2/J detectors. Remove a name to disable it.
+    builtin:
+      - email
+      - phone
+      - us_ssn
+      - credit_card        # Luhn-validated
+      - anthropic_api_key
+      - openai_api_key
+      - aws_access_key_id
+      - aws_secret_access_key
+      - github_token
+      - slack_token
+      - private_key_block
+      - jwt
+    # Extra patterns supplied by the user. They are compiled with RE2/J, which runs in
+    # linear time, so a bad pattern cannot hang the collector. `name` must be unique
+    # and is what appears in logs.
+    custom_patterns: []
+    #  - name: employee_id
+    #    regex: "\\bEMP-[0-9]{6}\\b"
+    #  - name: project_codename
+    #    regex: "(?i)\\bbluebird\\b"
+    ner:
+      enabled: true
+      model_path: "~/Library/Application Support/llm-firewall/models/pii-ner.onnx"
+      tokenizer_path: "~/Library/Application Support/llm-firewall/models/pii-ner-tokenizer.json"
+      min_score: 0.80
+      entity_types: [PERSON, ADDRESS, DATE_OF_BIRTH, ORGANIZATION, LOCATION]
+  injection:
+    heuristics:
+      enabled: true
+    hidden_content:
+      enabled: true
+      # Report encoded blobs (base64/hex/percent) whose decoded length is at least this.
+      min_encoded_blob_chars: 512
+    classifier:
+      enabled: true
+      model_path: "~/Library/Application Support/llm-firewall/models/prompt-guard-2.onnx"
+      tokenizer_path: "~/Library/Application Support/llm-firewall/models/prompt-guard-2-tokenizer.json"
+      window_tokens: 512
+      window_stride_tokens: 256          # 50% overlap
+      min_score: 0.50                    # Report only if max window score >= this.
+    excerpt_max_chars: 200
+  exfil:
+    # Markdown image or link targets in MODEL_OUTPUT whose host is NOT listed here
+    # (an exact match or a subdomain) and that carry query data are reported.
+    allowlisted_link_domains:
+      - claude.ai
+      - anthropic.com
+      - github.com
+      - wikipedia.org
+    min_query_chars: 16
+
+store:
+  database_path: "~/Library/Application Support/llm-firewall/llm-firewall.db"
+  # Events, findings and counters older than this are deleted daily.
+  retention_days: 90
