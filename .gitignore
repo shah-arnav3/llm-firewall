@@ -1,0 +1,55 @@
+# --- C++ / CMake ---
+proxy/build/
+proxy/build-*/
+proxy/cmake-build-*/
+proxy/vcpkg_installed/
+proxy/fuzz/corpus/
+proxy/fuzz/artifacts/
+crash-*
+leak-*
+timeout-*
+oom-*
+compile_commands.json
+CMakeUserPresets.json
+*.o
+*.a
+*.dylib
+*.dSYM/
+
+# --- Java / Gradle ---
+collector/build/
+collector/.gradle/
+.gradle/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+out/
+.idea/
+*.iml
+.vscode/
+
+# --- Models (downloaded at setup, never committed) ---
+*.onnx
+models/
+
+# --- Local data: logs describe what you sent to Claude. Never commit them. ---
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.jsonl
+*.log
+
+# --- Certificates and keys ---
+certs/
+*.pem
+*.key
+*.crt
+*.der
+*.p12
+*.srl
+
+# --- macOS ---
+.DS_Store
