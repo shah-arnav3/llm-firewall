@@ -1,0 +1,285 @@
+// capture.proto: wire contract between llmfw-proxy (C++) and the collector (Java).
+//
+// FRAMING
+//   Transport: a Unix domain stream socket at <ipc.socket_dir>/<ipc.socket_name>.
+//   The collector listens. The proxy connects. Data flows one way only: proxy to collector.
+//   Every message on the stream is one `Frame`, varint-length-delimited. That is
+//   protobuf's standard "delimited" encoding:
+//       C++  : google::protobuf::util::SerializeDelimitedToZeroCopyStream
+//       Java : Frame.parseDelimitedFrom(InputStream)
+//   The first frame on every connection MUST be `hello`. After that the proxy sends
+//   `capture` and `stats` frames in any order. A reader MUST reject a frame whose
+//   declared length exceeds `ipc.max_frame_bytes` and then close the connection.
+//   The proxy never reads from the socket.
+//
+// CONTENT RULES
+//   * Bodies are sent AFTER de-chunking and BEFORE content decoding. `data` is still
+//     gzip/br/zstd-encoded if Content-Encoding says so. The proxy never touches bodies.
+//   * Values of the headers listed in `capture.redact_headers` (Cookie, Authorization, ...)
+//     are removed at the tee. Only the name and the original length cross the socket.
+//   * This stream carries plaintext conversation content. It exists only in memory
+//     and in the kernel socket buffer, and it is never written to disk.
+//
+// VERSIONING
+//   `StreamHello.protocol_version` is the major version. The collector rejects a
+//   major version it does not know. Fields are only added, never renumbered.
+
+syntax = "proto3";
+
+package llmfw.v1;
+
+option java_package = "dev.llmfirewall.proto.v1";
+option java_multiple_files = true;
+option optimize_for = SPEED;
+
+// ---------------------------------------------------------------------------
+// Envelope
+// ---------------------------------------------------------------------------
+
+message Frame {
+  oneof kind {
+    StreamHello hello = 1;
+    Capture capture = 2;
+    ProxyStats stats = 3;
+  }
+}
+
+message StreamHello {
+  uint32 protocol_version = 1;   // Currently 1.
+  string proxy_instance_id = 2;  // Random UUID generated at each proxy start.
+  string proxy_version = 3;      // Build version string of llmfw-proxy.
+  int64 started_unix_ms = 4;     // When this proxy instance started.
+  CaptureMode mode = 5;
+}
+
+enum CaptureMode {
+  CAPTURE_MODE_UNSPECIFIED = 0;
+  CAPTURE_MODE_FULL = 1;           // Bodies included, subject to caps.
+  CAPTURE_MODE_METADATA_ONLY = 2;  // Phase 0: Body.data is always empty and Body.omitted = true.
+}
+
+// ---------------------------------------------------------------------------
+// Capture
+// ---------------------------------------------------------------------------
+
+// Which desktop traffic path produced the capture. The proxy assigns it from the
+// config `clients` User-Agent rules. The collector may refine it.
+enum ClientPath {
+  CLIENT_PATH_UNKNOWN = 0;
+  CLIENT_PATH_UI = 1;           // claude.ai UI in Electron/Chromium.
+  CLIENT_PATH_CLAUDE_CODE = 2;  // Bundled Claude Code / agent components (Node).
+  CLIENT_PATH_VM = 3;           // Cowork VM (coverage unverified; see docs).
+}
+
+message Capture {
+  // Increases by exactly 1 for each capture this proxy_instance creates, starting at 1.
+  // A capture that is later dropped (queue full, socket down) still used up an id.
+  // So a gap in the ids the collector sees is proof of a drop.
+  uint64 capture_id = 1;
+  uint64 connection_id = 2;   // Proxy-local id of the client TCP connection.
+  uint32 exchange_index = 3;  // 0-based index of this exchange on the connection.
+  ClientInfo client = 4;
+  Timings timings = 5;
+
+  oneof payload {
+    HttpExchange http = 10;
+    WebSocketMessage websocket = 11;
+    TunnelSummary tunnel = 12;
+  }
+}
+
+message ClientInfo {
+  ClientPath path = 1;
+  // User-Agent of the inner (decrypted) request if one exists. Otherwise the
+  // User-Agent sent on CONNECT. Otherwise empty.
+  string user_agent = 2;
+  string connect_user_agent = 3;  // User-Agent header on the CONNECT request, if any.
+}
+
+// Every *_us offset is in microseconds and is measured from `start_unix_us`.
+// An offset of 0 means "did not happen".
+message Timings {
+  int64 start_unix_us = 1;             // First byte of the request (or of the WS message / tunnel open).
+  uint64 request_complete_us = 2;
+  uint64 response_first_byte_us = 3;
+  uint64 response_complete_us = 4;
+  uint64 upstream_connect_us = 5;      // Connection-level. Set only on exchange_index 0.
+  uint64 client_tls_handshake_us = 6;  // Connection-level. Set only on exchange_index 0.
+}
+
+// ---------------------------------------------------------------------------
+// HTTP
+// ---------------------------------------------------------------------------
+
+message HttpExchange {
+  string connect_host = 1;  // Host from the CONNECT line. The proxy dials this host upstream.
+  uint32 connect_port = 2;
+  string negotiated_alpn = 3;  // "http/1.1" in phase 0.
+  HttpRequest request = 4;
+  HttpResponse response = 5;  // Absent if no response head was received.
+  ExchangeOutcome outcome = 6;
+}
+
+enum ExchangeOutcome {
+  EXCHANGE_OUTCOME_UNSPECIFIED = 0;
+  EXCHANGE_OUTCOME_COMPLETE = 1;
+  EXCHANGE_OUTCOME_CLIENT_ABORTED = 2;
+  EXCHANGE_OUTCOME_UPSTREAM_ABORTED = 3;
+  EXCHANGE_OUTCOME_TIMEOUT = 4;
+  // llhttp rejected the bytes. The proxy switched the connection to raw relay,
+  // which still forwards bytes unchanged but stops capturing.
+  EXCHANGE_OUTCOME_PARSE_ERROR = 5;
+  EXCHANGE_OUTCOME_UPGRADED = 6;  // 101 Switching Protocols. WebSocketMessage captures follow.
+}
+
+message HttpRequest {
+  string method = 1;
+  string host = 2;          // Value of the Host header (authority), lower-cased.
+  string target = 3;        // Origin-form request target: path plus query, exactly as sent.
+  string http_version = 4;  // e.g. "HTTP/1.1".
+  repeated Header headers = 5;  // In wire order. Duplicates preserved.
+  Body body = 6;
+}
+
+message HttpResponse {
+  uint32 status = 1;
+  string reason = 2;
+  string http_version = 3;
+  repeated Header headers = 4;
+  Body body = 5;
+}
+
+message Header {
+  string name = 1;   // Case as sent on the wire.
+  string value = 2;  // Empty when redacted is true.
+  bool redacted = 3;
+  uint32 original_value_length = 4;  // Set only when redacted is true.
+}
+
+message Body {
+  bytes data = 1;          // At most the configured cap. Still content-encoded.
+  uint64 total_bytes = 2;  // Total bytes seen on the wire after de-chunking.
+  bool truncated = 3;      // True iff total_bytes > data.size().
+  bool omitted = 4;        // True in CAPTURE_MODE_METADATA_ONLY.
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket
+// ---------------------------------------------------------------------------
+
+// One complete WebSocket message: fragments reassembled, and client masking removed
+// for the capture copy only. The bytes forwarded on the wire are the original ones.
+message WebSocketMessage {
+  uint64 upgrade_capture_id = 1;  // capture_id of the HttpExchange that received 101.
+  string host = 2;
+  string target = 3;              // Request target of the upgrade request.
+  Direction direction = 4;
+  WsOpcode opcode = 5;
+  uint32 message_index = 6;       // 0-based index per (connection, direction).
+  bytes payload = 7;              // Capped.
+  uint64 total_bytes = 8;
+  bool truncated = 9;
+  // RSV1 was set and permessage-deflate was negotiated. The payload is still
+  // compressed. The collector inflates it using a per-connection context.
+  bool compressed = 10;
+  string negotiated_extensions = 11;  // Sec-WebSocket-Extensions from the 101 response.
+}
+
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  DIRECTION_CLIENT_TO_SERVER = 1;
+  DIRECTION_SERVER_TO_CLIENT = 2;
+}
+
+enum WsOpcode {
+  WS_OPCODE_UNSPECIFIED = 0;
+  WS_OPCODE_TEXT = 1;
+  WS_OPCODE_BINARY = 2;
+  WS_OPCODE_CLOSE = 8;
+  WS_OPCODE_PING = 9;
+  WS_OPCODE_PONG = 10;
+}
+
+// ---------------------------------------------------------------------------
+// Blind tunnels (never decrypted; metadata only; emitted when the tunnel closes)
+// ---------------------------------------------------------------------------
+
+message TunnelSummary {
+  string host = 1;
+  uint32 port = 2;
+  TunnelReason reason = 3;
+  uint64 bytes_client_to_server = 4;
+  uint64 bytes_server_to_client = 5;
+  uint64 duration_us = 6;
+}
+
+enum TunnelReason {
+  TUNNEL_REASON_UNSPECIFIED = 0;
+  TUNNEL_REASON_UNSCOPED_HOST = 1;          // Host not in scope.decrypt_hosts.
+  TUNNEL_REASON_SCOPED_NO_CERT = 2;         // In scope, but no leaf SAN covers it.
+  TUNNEL_REASON_UPSTREAM_VERIFY_FAILED = 3; // Strict upstream verification failed. The client verifies for itself.
+  TUNNEL_REASON_CLIENT_TLS_BREAKER = 4;     // The client recently rejected our leaf for this host.
+  TUNNEL_REASON_NON_TLS_PORT = 5;           // CONNECT to a port other than 443.
+}
+
+// ---------------------------------------------------------------------------
+// Proxy statistics (cumulative since proxy_instance start)
+// ---------------------------------------------------------------------------
+
+// Sent once right after hello and then every `ipc.stats_interval_ms`. Values are
+// cumulative totals for this proxy_instance. The collector stores deltas.
+message ProxyStats {
+  string proxy_instance_id = 1;
+  int64 as_of_unix_ms = 2;
+  uint64 connections_accepted = 3;
+  uint64 captures_created = 4;
+  uint64 captures_dropped_queue_full = 5;
+  uint64 captures_dropped_ipc_unavailable = 6;
+  uint64 request_bodies_truncated = 7;
+  uint64 response_bodies_truncated = 8;
+  uint64 ws_messages_truncated = 9;
+  uint64 tunnels_unscoped = 10;
+  uint64 tunnels_scoped_no_cert = 11;
+  uint64 tunnels_upstream_verify_failed = 12;
+  uint64 tunnels_client_tls_breaker = 13;
+  uint64 client_tls_handshake_failures = 14;
+  uint64 http_parse_errors = 15;
+  uint64 non_connect_requests_rejected = 16;
+  uint64 queue_high_watermark_items = 17;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 0 metadata log record (written as JSON Lines by the proxy; never sent on the socket)
+// ---------------------------------------------------------------------------
+
+// The proxy's MetadataLogger writes one line per Capture using the protobuf JSON
+// mapping of this message. It contains no bodies, no header values except the
+// allowlisted ones, and no query values.
+message MetadataRecord {
+  string proxy_instance_id = 1;
+  uint64 capture_id = 2;
+  uint64 connection_id = 3;
+  uint32 exchange_index = 4;
+  string kind = 5;                  // "http" | "websocket" | "tunnel"
+  ClientPath client_path = 6;
+  string user_agent = 7;
+  string host = 8;
+  string method = 9;
+  string path = 10;                 // Target without the query string.
+  repeated string query_keys = 11;  // Query parameter names only.
+  uint32 status = 12;
+  string request_content_type = 13;
+  string response_content_type = 14;
+  uint64 request_bytes = 15;
+  uint64 response_bytes = 16;
+  repeated string request_header_names = 17;
+  repeated string response_header_names = 18;
+  Timings timings = 19;
+  ExchangeOutcome outcome = 20;
+  TunnelReason tunnel_reason = 21;
+  // Open client connections to the same host when this exchange started.
+  // Used to measure HTTP/1.1 stalls caused by the 6-connections-per-host limit.
+  uint32 concurrent_connections_same_host = 22;
+  string ws_direction = 23;
+  uint64 ws_payload_bytes = 24;
+}
