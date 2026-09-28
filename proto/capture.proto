@@ -32,10 +32,6 @@ option java_package = "dev.llmfirewall.proto.v1";
 option java_multiple_files = true;
 option optimize_for = SPEED;
 
-// ---------------------------------------------------------------------------
-// Envelope
-// ---------------------------------------------------------------------------
-
 message Frame {
   oneof kind {
     StreamHello hello = 1;
@@ -55,12 +51,8 @@ message StreamHello {
 enum CaptureMode {
   CAPTURE_MODE_UNSPECIFIED = 0;
   CAPTURE_MODE_FULL = 1;           // Bodies included, subject to caps.
-  CAPTURE_MODE_METADATA_ONLY = 2;  // Phase 0: Body.data is always empty and Body.omitted = true.
+  CAPTURE_MODE_METADATA_ONLY = 2;  // Body.data is always empty and Body.omitted = true.
 }
-
-// ---------------------------------------------------------------------------
-// Capture
-// ---------------------------------------------------------------------------
 
 // Which desktop traffic path produced the capture. The proxy assigns it from the
 // config `clients` User-Agent rules. The collector may refine it.
@@ -68,7 +60,7 @@ enum ClientPath {
   CLIENT_PATH_UNKNOWN = 0;
   CLIENT_PATH_UI = 1;           // claude.ai UI in Electron/Chromium.
   CLIENT_PATH_CLAUDE_CODE = 2;  // Bundled Claude Code / agent components (Node).
-  CLIENT_PATH_VM = 3;           // Cowork VM (coverage unverified; see docs).
+  CLIENT_PATH_VM = 3;           // Cowork VM. Its traffic may not reach the proxy at all.
 }
 
 message Capture {
@@ -107,14 +99,10 @@ message Timings {
   uint64 client_tls_handshake_us = 6;  // Connection-level. Set only on exchange_index 0.
 }
 
-// ---------------------------------------------------------------------------
-// HTTP
-// ---------------------------------------------------------------------------
-
 message HttpExchange {
   string connect_host = 1;  // Host from the CONNECT line. The proxy dials this host upstream.
   uint32 connect_port = 2;
-  string negotiated_alpn = 3;  // "http/1.1" in phase 0.
+  string negotiated_alpn = 3;  // Always "http/1.1": the proxy offers no other protocol.
   HttpRequest request = 4;
   HttpResponse response = 5;  // Absent if no response head was received.
   ExchangeOutcome outcome = 6;
@@ -163,10 +151,6 @@ message Body {
   bool omitted = 4;        // True in CAPTURE_MODE_METADATA_ONLY.
 }
 
-// ---------------------------------------------------------------------------
-// WebSocket
-// ---------------------------------------------------------------------------
-
 // One complete WebSocket message: fragments reassembled, and client masking removed
 // for the capture copy only. The bytes forwarded on the wire are the original ones.
 message WebSocketMessage {
@@ -200,9 +184,7 @@ enum WsOpcode {
   WS_OPCODE_PONG = 10;
 }
 
-// ---------------------------------------------------------------------------
 // Blind tunnels (never decrypted; metadata only; emitted when the tunnel closes)
-// ---------------------------------------------------------------------------
 
 message TunnelSummary {
   string host = 1;
@@ -222,9 +204,7 @@ enum TunnelReason {
   TUNNEL_REASON_NON_TLS_PORT = 5;           // CONNECT to a port other than 443.
 }
 
-// ---------------------------------------------------------------------------
 // Proxy statistics (cumulative since proxy_instance start)
-// ---------------------------------------------------------------------------
 
 // Sent once right after hello and then every `ipc.stats_interval_ms`. Values are
 // cumulative totals for this proxy_instance. The collector stores deltas.
@@ -234,7 +214,7 @@ message ProxyStats {
   uint64 connections_accepted = 3;
   uint64 captures_created = 4;
   uint64 captures_dropped_queue_full = 5;
-  uint64 captures_dropped_ipc_unavailable = 6;
+  uint64 captures_dropped_ipc_unavailable = 6;  // Dropped because the collector socket was down.
   uint64 request_bodies_truncated = 7;
   uint64 response_bodies_truncated = 8;
   uint64 ws_messages_truncated = 9;
@@ -244,13 +224,11 @@ message ProxyStats {
   uint64 tunnels_client_tls_breaker = 13;
   uint64 client_tls_handshake_failures = 14;
   uint64 http_parse_errors = 15;
-  uint64 non_connect_requests_rejected = 16;
-  uint64 queue_high_watermark_items = 17;
+  uint64 non_connect_requests_rejected = 16;  // Plain (non-CONNECT) requests answered with 405.
+  uint64 queue_high_watermark_items = 17;     // Largest capture-queue depth seen, in captures.
 }
 
-// ---------------------------------------------------------------------------
-// Phase 0 metadata log record (written as JSON Lines by the proxy; never sent on the socket)
-// ---------------------------------------------------------------------------
+// Metadata log record (written as JSON Lines by the proxy; never sent on the socket)
 
 // The proxy's MetadataLogger writes one line per Capture using the protobuf JSON
 // mapping of this message. It contains no bodies, no header values except the

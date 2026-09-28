@@ -1,4 +1,4 @@
-# --- C++ / CMake ---
+# C++ / CMake
 proxy/build/
 proxy/build-*/
 proxy/cmake-build-*/
@@ -16,7 +16,7 @@ CMakeUserPresets.json
 *.dylib
 *.dSYM/
 
-# --- Java / Gradle ---
+# Java / Gradle
 collector/build/
 collector/.gradle/
 .gradle/
@@ -28,11 +28,11 @@ out/
 *.iml
 .vscode/
 
-# --- Models (downloaded at setup, never committed) ---
+# Models (downloaded at setup, never committed)
 *.onnx
 models/
 
-# --- Local data: logs describe what you sent to Claude. Never commit them. ---
+# Local data: logs describe what you sent to Claude. Never commit them.
 *.db
 *.db-wal
 *.db-shm
@@ -42,7 +42,7 @@ models/
 *.jsonl
 *.log
 
-# --- Certificates and keys ---
+# Certificates and keys
 certs/
 *.pem
 *.key
@@ -51,5 +51,5 @@ certs/
 *.p12
 *.srl
 
-# --- macOS ---
+# macOS
 .DS_Store

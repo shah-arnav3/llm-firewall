@@ -11,9 +11,7 @@
 
 version: 1
 
-# ---------------------------------------------------------------------------
 # Data plane (llmfw-proxy)
-# ---------------------------------------------------------------------------
 proxy:
   # Loopback only. The proxy refuses to start on any non-loopback address.
   listen_address: 127.0.0.1
@@ -115,9 +113,7 @@ metadata_log:
   # by name only.
   logged_header_values: ["content-type", "content-length", "content-encoding", "user-agent", "upgrade"]
 
-# ---------------------------------------------------------------------------
 # Analysis (collector, Java)
-# ---------------------------------------------------------------------------
 collector:
   # CPU workers that parse, label and detect. Receive and store each run on their own single thread.
   worker_threads: 2
