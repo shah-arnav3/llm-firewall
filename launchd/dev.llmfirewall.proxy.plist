@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchAgent template for llmfw-proxy (the data plane).
+  `llmfw-setup install` renders the @TOKENS@ and writes the result to
+  ~/Library/LaunchAgents/dev.llmfirewall.proxy.plist, then runs
+  `launchctl bootstrap gui/<uid>`. `llmfw-setup uninstall` boots it out and deletes it.
+
+  ProcessType is Standard, not Background: the proxy is on Claude's request path, so
+  its I/O must not be throttled. KeepAlive restarts it after a crash, at most once
+  every ThrottleInterval (10 s). While it is down, the UI path's PAC falls back to
+  DIRECT. The Claude Code path (HTTPS_PROXY) has no fallback and fails until the restart.
+  Umask 63 (octal 077) makes every file it creates private.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.llmfirewall.proxy</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>@BIN_DIR@/llmfw-proxy</string>
+    <string>--config</string>
+    <string>@CONFIG@</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Standard</string>
+  <key>Umask</key>
+  <integer>63</integer>
+
+  <key>StandardOutPath</key>
+  <string>@LOGS_DIR@/proxy.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGS_DIR@/proxy.log</string>
+</dict>
+</plist>
