@@ -1,0 +1,9 @@
+{
+  "name": "llmfw-proxy",
+  "version-string": "0.1.0",
+  "description": "llm-firewall data plane (proxy)",
+  "dependencies": [
+    "boost-asio",
+    "gtest"
+  ]
+}

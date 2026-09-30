@@ -1,8 +1,7 @@
 # llm-firewall
 
-**Status: architecture and shells only, nothing implemented.** Every function body is
-a stub that throws "not implemented". Build files declare targets and dependencies,
-but nothing has been built or run.
+**Status: early implementation.** Only what [Build and test](#build-and-test) lists
+runs today. The rest of this document describes the design being built.
 
 llm-firewall is a local monitor for the **Claude desktop app on macOS**. It only
 **logs**. It never blocks, modifies or delays traffic. It has exactly two goals:
@@ -423,39 +422,30 @@ llm-firewall/
 
 ## Build and test
 
-> **Not yet runnable.** These are the intended commands. Every body is a stub, so
-> binaries would throw "not implemented", and the tests are skipped or disabled.
+Only the proxy's host-scope matching builds today; it is the start of the proxy in `proxy/`.
 
-Proxy and setup CLI (C++20; needs Boost ≥ 1.83, OpenSSL 3, llhttp, protobuf, yaml-cpp, GoogleTest):
+Prerequisites (macOS, Apple Clang 15 or newer, C++20):
 
 ```sh
-cmake -S proxy -B proxy/build -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
+brew install cmake ninja boost googletest   # tested with CMake 4.4, Boost 1.92, GoogleTest 1.18
+```
+
+Build and run the tests:
+
+```sh
+cmake -S proxy -B proxy/build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$(brew --prefix)"
 cmake --build proxy/build
 ctest --test-dir proxy/build --output-on-failure
-
-# Sanitizers
-cmake -S proxy -B proxy/build-asan -DLLMFW_SANITIZE=ON && cmake --build proxy/build-asan
-ctest --test-dir proxy/build-asan
-
-# Fuzzers (Clang)
-cmake -S proxy -B proxy/build-fuzz -DCMAKE_CXX_COMPILER=clang++ -DLLMFW_FUZZ=ON -DLLMFW_SANITIZE=ON
-cmake --build proxy/build-fuzz
-./proxy/build-fuzz/fuzz_http1_request proxy/fuzz/corpus/http1_request
 ```
 
-Collector (Java 21):
+`CMAKE_PREFIX_PATH` makes CMake prefer Homebrew's packages. Without it, another
+installation on the search path (such as Miniconda's older GoogleTest) can be found
+first and fail to link.
+
+With AddressSanitizer and UndefinedBehaviorSanitizer:
 
 ```sh
-cd collector
-gradle test            # JUnit 5 (a Gradle wrapper is not committed yet)
-gradle installDist     # build/install/llmfw-collector/bin/llmfw-collector
-```
-
-Install (after building):
-
-```sh
-proxy/build/llmfw-setup install
-open "$HOME/Applications/Claude (Monitored).app"
-proxy/build/llmfw-setup status
+cmake -S proxy -B proxy/build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLLMFW_SANITIZE=ON -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+cmake --build proxy/build-asan
+ctest --test-dir proxy/build-asan --output-on-failure
 ```
