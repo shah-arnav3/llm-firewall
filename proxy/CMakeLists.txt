@@ -15,6 +15,7 @@ option(LLMFW_SANITIZE    "Build with AddressSanitizer + UndefinedBehaviorSanitiz
 
 # Dependencies come from Homebrew (see README). vcpkg.json lists the same packages for a vcpkg build.
 find_package(Boost 1.83 REQUIRED CONFIG COMPONENTS headers)  # Asio is header-only
+find_package(yaml-cpp CONFIG REQUIRED)
 
 add_library(llmfw_flags INTERFACE)
 target_compile_options(llmfw_flags INTERFACE
@@ -30,16 +31,22 @@ endif()
 
 # Core proxy library, linked by the tests
 add_library(llmfw_core STATIC
+  src/config.cpp
   src/host_scope.cpp)
 target_include_directories(llmfw_core PUBLIC include)
-target_link_libraries(llmfw_core PUBLIC llmfw_flags Boost::headers)
+target_link_libraries(llmfw_core
+  PUBLIC  llmfw_flags Boost::headers
+  PRIVATE yaml-cpp::yaml-cpp)
 
 if (LLMFW_BUILD_TESTS)
   enable_testing()
   find_package(GTest CONFIG REQUIRED)
   add_executable(llmfw-tests
+    tests/test_config.cpp
     tests/test_host_scope.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_core GTest::gtest_main)
+  # The config tests load the committed example config/llm-firewall.yaml.
+  target_compile_definitions(llmfw-tests PRIVATE LLMFW_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
   include(GoogleTest)
   gtest_discover_tests(llmfw-tests)
 endif()

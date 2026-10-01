@@ -422,12 +422,14 @@ llm-firewall/
 
 ## Build and test
 
-Only the proxy's host-scope matching builds today; it is the start of the proxy in `proxy/`.
+The proxy in `proxy/` is partly built: its core library and unit tests build today,
+but there is no `llmfw-proxy` executable yet.
 
 Prerequisites (macOS, Apple Clang 15 or newer, C++20):
 
 ```sh
-brew install cmake ninja boost googletest   # tested with CMake 4.4, Boost 1.92, GoogleTest 1.18
+brew install cmake ninja boost yaml-cpp googletest
+# tested with CMake 4.4, Ninja 1.13, Boost 1.92, yaml-cpp 0.9, GoogleTest 1.18
 ```
 
 Build and run the tests:

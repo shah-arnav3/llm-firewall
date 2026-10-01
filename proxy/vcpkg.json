@@ -4,6 +4,7 @@
   "description": "llm-firewall data plane (proxy)",
   "dependencies": [
     "boost-asio",
+    "yaml-cpp",
     "gtest"
   ]
 }
