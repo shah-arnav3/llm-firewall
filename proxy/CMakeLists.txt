@@ -32,6 +32,7 @@ endif()
 # Core proxy library, linked by the tests
 add_library(llmfw_core STATIC
   src/config.cpp
+  src/connect_handler.cpp
   src/host_scope.cpp)
 target_include_directories(llmfw_core PUBLIC include)
 target_link_libraries(llmfw_core
@@ -43,6 +44,7 @@ if (LLMFW_BUILD_TESTS)
   find_package(GTest CONFIG REQUIRED)
   add_executable(llmfw-tests
     tests/test_config.cpp
+    tests/test_connect_request.cpp
     tests/test_host_scope.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_core GTest::gtest_main)
   # The config tests load the committed example config/llm-firewall.yaml.
