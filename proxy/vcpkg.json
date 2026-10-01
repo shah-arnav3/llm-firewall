@@ -5,6 +5,7 @@
   "dependencies": [
     "boost-asio",
     "yaml-cpp",
+    "protobuf",
     "gtest"
   ]
 }
