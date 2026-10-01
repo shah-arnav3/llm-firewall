@@ -46,6 +46,7 @@ target_link_libraries(llmfw_proto PUBLIC protobuf::libprotobuf)
 # Core proxy library, linked by the tests
 add_library(llmfw_core STATIC
   src/capture_builder.cpp
+  src/capture_queue.cpp
   src/client_classifier.cpp
   src/config.cpp
   src/connect_handler.cpp
@@ -61,6 +62,7 @@ if (LLMFW_BUILD_TESTS)
   find_package(GTest CONFIG REQUIRED)
   add_executable(llmfw-tests
     tests/test_capture_builder.cpp
+    tests/test_capture_queue.cpp
     tests/test_client_classifier.cpp
     tests/test_config.cpp
     tests/test_connect_request.cpp
