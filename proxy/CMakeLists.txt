@@ -28,6 +28,9 @@ if (LLMFW_SANITIZE)
   target_compile_options(llmfw_flags INTERFACE
     -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
   target_link_options(llmfw_flags INTERFACE -fsanitize=address,undefined)
+  # Under ASan, protobuf's headers switch to a different default-instance layout,
+  # which disagrees with the uninstrumented generated code and libprotobuf.
+  target_compile_definitions(llmfw_flags INTERFACE PROTOBUF_MESSAGE_GLOBALS_TEMPORARY_OPTOUT)
 endif()
 
 # Generated protobuf code (shared contract with the Java collector)
