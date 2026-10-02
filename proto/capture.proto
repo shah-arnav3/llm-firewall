@@ -248,8 +248,8 @@ message MetadataRecord {
   uint32 status = 12;
   string request_content_type = 13;
   string response_content_type = 14;
-  uint64 request_bytes = 15;
-  uint64 response_bytes = 16;
+  uint64 request_bytes = 15;        // Request body bytes, or client-to-server bytes for a tunnel.
+  uint64 response_bytes = 16;       // Response body bytes, or server-to-client bytes for a tunnel.
   repeated string request_header_names = 17;
   repeated string response_header_names = 18;
   Timings timings = 19;
@@ -260,4 +260,5 @@ message MetadataRecord {
   uint32 concurrent_connections_same_host = 22;
   string ws_direction = 23;
   uint64 ws_payload_bytes = 24;
+  uint64 tunnel_duration_us = 25;   // How long a tunnel stayed open.
 }
