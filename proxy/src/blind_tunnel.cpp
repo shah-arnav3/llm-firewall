@@ -51,6 +51,12 @@ BlindTunnel::BlindTunnel(tcp::socket client, std::uint64_t connection_id, std::s
 
 void BlindTunnel::start() {
   asio::dispatch(client_.get_executor(), [self = shared_from_this()] {
+    if (!self->ctx_.tunnels.add(self->connection_id_, self)) {
+      // The proxy is shutting down.
+      self->finished_ = true;
+      self->closeSockets();
+      return;
+    }
     self->started_ = Clock::now();
     self->started_unix_us_ = nowUnixUs();
     self->countAndLogOpen();
@@ -192,6 +198,7 @@ void BlindTunnel::failUpstream(const std::string& what) {
           std::to_string(port_) + " " + (connect_timed_out_ ? std::string("timed out") : what));
   finished_ = true;
   timer_.cancel();
+  ctx_.tunnels.remove(connection_id_);
   asio::async_write(client_, asio::buffer(kBadGateway),
                     [self = shared_from_this()](const boost::system::error_code&, std::size_t) {
                       boost::system::error_code ignored;
@@ -214,6 +221,7 @@ void BlindTunnel::finish() {
   timer_.cancel();
   closeSockets();
   if (!connected_) {
+    ctx_.tunnels.remove(connection_id_);
     return;
   }
   TunnelObservation observation;
@@ -227,6 +235,8 @@ void BlindTunnel::finish() {
   observation.start_unix_us = started_unix_us_;
   observation.duration = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - started_);
   (void)ctx_.queue.tryPush(buildTunnelCapture(ctx_.build, observation));
+  // Last, so shutdown never stops the I/O threads before this capture is queued.
+  ctx_.tunnels.remove(connection_id_);
 }
 
 }  // namespace llmfw

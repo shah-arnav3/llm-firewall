@@ -17,6 +17,8 @@ namespace llmfw {
 /// Relays bytes between a client and host:port without inspecting them.
 ///
 /// start():
+///   0. Registers with ctx.tunnels. If the proxy is already shutting down, it closes
+///      the client at once instead. It deregisters when it ends.
 ///   1. Counts the tunnel by reason (tunnels_unscoped, tunnels_scoped_no_cert, ...;
 ///      kNonTlsPort has no counter) and logs one "tunnel open" line.
 ///   2. Resolves and connects within upstream.connect_timeout. On failure it replies

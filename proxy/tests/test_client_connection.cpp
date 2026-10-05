@@ -64,7 +64,8 @@ class ProxyHarness {
   CaptureQueue queue_{100, 1 << 20, counters_};
   ClientClassifier classifier_{{{ClientPathTag::kUi, {"Electron/"}}}};
   CaptureBuildContext build_{classifier_, counters_};
-  ProxyContext context_{config_, scope_, queue_, counters_, build_};
+  TunnelRegistry tunnels_;
+  ProxyContext context_{config_, scope_, queue_, counters_, build_, tunnels_};
   asio::io_context io_;
   asio::executor_work_guard<asio::io_context::executor_type> work_ = asio::make_work_guard(io_);
   std::unique_ptr<Listener> listener_;
@@ -192,7 +193,8 @@ TEST(Listener, RejectsNonLoopbackAddress) {
   CaptureQueue queue(10, 1 << 20, counters);
   ClientClassifier classifier({});
   CaptureBuildContext build{classifier, counters};
-  ProxyContext context{config, scope, queue, counters, build};
+  TunnelRegistry tunnels;
+  ProxyContext context{config, scope, queue, counters, build, tunnels};
   for (const char* address : {"0.0.0.0", "192.168.1.10", "localhost"}) {
     ListenConfig listen;
     listen.address = address;

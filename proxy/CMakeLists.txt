@@ -59,7 +59,8 @@ add_library(llmfw_core STATIC
   src/host_scope.cpp
   src/listener.cpp
   src/log.cpp
-  src/metadata_logger.cpp)
+  src/metadata_logger.cpp
+  src/proxy_context.cpp)
 target_include_directories(llmfw_core PUBLIC include)
 target_link_libraries(llmfw_core
   PUBLIC  llmfw_flags llmfw_proto Boost::headers
@@ -79,7 +80,8 @@ if (LLMFW_BUILD_TESTS)
     tests/test_connect_request.cpp
     tests/test_counters.cpp
     tests/test_host_scope.cpp
-    tests/test_metadata_logger.cpp)
+    tests/test_metadata_logger.cpp
+    tests/test_tunnel_registry.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_core GTest::gtest_main)
   # The config tests load the committed example config/llm-firewall.yaml.
   target_compile_definitions(llmfw-tests PRIVATE LLMFW_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
