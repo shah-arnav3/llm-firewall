@@ -422,8 +422,9 @@ llm-firewall/
 
 ## Build and test
 
-The proxy in `proxy/` is partly built: its core library and unit tests build today,
-but there is no `llmfw-proxy` executable yet.
+The proxy in `proxy/` builds and runs in `metadata_only` mode: it blind-tunnels every
+CONNECT (nothing is decrypted yet) and logs one metadata record per tunnel. The setup
+tool, the launcher and the collector are not built yet.
 
 Prerequisites (macOS, Apple Clang 15 or newer, C++20):
 
@@ -451,3 +452,22 @@ cmake -S proxy -B proxy/build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLLMFW_SAN
 cmake --build proxy/build-asan
 ctest --test-dir proxy/build-asan --output-on-failure
 ```
+
+### Running the proxy
+
+```sh
+proxy/build/llmfw-proxy --config config/llm-firewall.yaml
+```
+
+It listens on `127.0.0.1:18443`, logs operational lines (hosts, counts, errors) to
+stderr, and appends one JSON line per closed tunnel to
+`~/Library/Logs/llm-firewall/phase0-metadata.jsonl` (mode 0600). To try it without
+Claude, send a request through it:
+
+```sh
+curl -x http://127.0.0.1:18443 https://example.com/
+```
+
+Ctrl-C or SIGTERM shuts it down: open tunnels are closed and still logged, and a
+counter summary is printed. Exit codes: 0 clean, 1 unexpected error, 2 bad command
+line or configuration, 3 the metadata log cannot be opened, 4 the port cannot be bound.

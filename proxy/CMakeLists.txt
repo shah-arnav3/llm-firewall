@@ -66,6 +66,10 @@ target_link_libraries(llmfw_core
   PUBLIC  llmfw_flags llmfw_proto Boost::headers
   PRIVATE yaml-cpp::yaml-cpp)
 
+add_executable(llmfw-proxy src/proxy_main.cpp)
+target_link_libraries(llmfw-proxy PRIVATE llmfw_core)
+target_compile_definitions(llmfw-proxy PRIVATE LLMFW_VERSION="${PROJECT_VERSION}")
+
 if (LLMFW_BUILD_TESTS)
   enable_testing()
   find_package(GTest CONFIG REQUIRED)
@@ -81,10 +85,19 @@ if (LLMFW_BUILD_TESTS)
     tests/test_counters.cpp
     tests/test_host_scope.cpp
     tests/test_metadata_logger.cpp
+    tests/test_proxy_app.cpp
     tests/test_tunnel_registry.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_core GTest::gtest_main)
   # The config tests load the committed example config/llm-firewall.yaml.
   target_compile_definitions(llmfw-tests PRIVATE LLMFW_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
   include(GoogleTest)
   gtest_discover_tests(llmfw-tests)
+
+  # The real binary: usage, version, and the config-error exit code.
+  add_test(NAME llmfw-proxy.help COMMAND llmfw-proxy --help)
+  add_test(NAME llmfw-proxy.version COMMAND llmfw-proxy --version)
+  set_tests_properties(llmfw-proxy.version PROPERTIES PASS_REGULAR_EXPRESSION "^llmfw-proxy ${PROJECT_VERSION}")
+  add_test(NAME llmfw-proxy.bad-argument COMMAND llmfw-proxy --nope)
+  add_test(NAME llmfw-proxy.missing-config COMMAND llmfw-proxy --config /nonexistent/llm-firewall.yaml)
+  set_tests_properties(llmfw-proxy.bad-argument llmfw-proxy.missing-config PROPERTIES WILL_FAIL TRUE)
 endif()

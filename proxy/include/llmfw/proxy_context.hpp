@@ -1,5 +1,5 @@
 #pragma once
-// Process-wide objects shared by every connection.
+// Process-wide objects shared by every connection, and the application that owns them.
 
 #include <cstddef>
 #include <cstdint>
@@ -50,6 +50,47 @@ struct ProxyContext {
   ProxyCounters& counters;
   const CaptureBuildContext& build;
   TunnelRegistry& tunnels;
+};
+
+/// Process exit codes of llmfw-proxy.
+enum ExitCode : int {
+  kExitOk = 0,
+  kExitUnexpected = 1,  ///< An unexpected exception.
+  kExitConfig = 2,      ///< Bad command line or configuration.
+  kExitSink = 3,        ///< The metadata log cannot be opened.
+  kExitBind = 4,        ///< The listen address cannot be bound.
+};
+
+/// Owns the io_context and its threads, every shared object, the drain thread and its sink.
+///
+/// run():
+///   - Rejects proxy.mode "full" (kExitConfig): decryption is not implemented.
+///   - Startup: instance id -> metadata log (kExitSink on failure) -> shared objects ->
+///     drain -> listener (kExitBind on failure) -> listen.io_threads I/O threads.
+///   - Shutdown, on SIGINT, SIGTERM or requestStop(): stop accepting -> close every open
+///     tunnel (each is still captured) -> once they have finished, or after 2 s, stop
+///     the I/O threads -> drain the queue to the log for up to 2 s -> log a counter
+///     summary -> return kExitOk (kExitUnexpected if an I/O thread threw).
+/// If the proxy is not running, Claude's PAC falls back to DIRECT, so only logging is lost.
+class ProxyApp {
+ public:
+  explicit ProxyApp(ProxyConfig config);
+  ~ProxyApp();
+  ProxyApp(const ProxyApp&) = delete;
+  ProxyApp& operator=(const ProxyApp&) = delete;
+
+  /// Blocks until shutdown and returns an ExitCode. Call once.
+  [[nodiscard]] int run();
+
+  /// Starts a graceful shutdown. Safe from any thread, before or during run().
+  void requestStop();
+
+ private:
+  struct State;
+  ProxyConfig config_;
+  std::mutex mu_;
+  State* state_ = nullptr;  ///< Set while run() is serving; guarded by mu_.
+  bool stop_requested_ = false;
 };
 
 }  // namespace llmfw
