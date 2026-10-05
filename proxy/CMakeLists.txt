@@ -48,6 +48,7 @@ target_link_libraries(llmfw_proto PUBLIC protobuf::libprotobuf)
 
 # Core proxy library, linked by the tests
 add_library(llmfw_core STATIC
+  src/blind_tunnel.cpp
   src/capture_builder.cpp
   src/capture_queue.cpp
   src/capture_sink.cpp
@@ -56,6 +57,7 @@ add_library(llmfw_core STATIC
   src/connect_handler.cpp
   src/counters.cpp
   src/host_scope.cpp
+  src/log.cpp
   src/metadata_logger.cpp)
 target_include_directories(llmfw_core PUBLIC include)
 target_link_libraries(llmfw_core
@@ -66,6 +68,7 @@ if (LLMFW_BUILD_TESTS)
   enable_testing()
   find_package(GTest CONFIG REQUIRED)
   add_executable(llmfw-tests
+    tests/test_blind_tunnel.cpp
     tests/test_capture_builder.cpp
     tests/test_capture_queue.cpp
     tests/test_capture_sink.cpp
