@@ -57,6 +57,7 @@ add_library(llmfw_core STATIC
   src/connect_handler.cpp
   src/counters.cpp
   src/host_scope.cpp
+  src/listener.cpp
   src/log.cpp
   src/metadata_logger.cpp)
 target_include_directories(llmfw_core PUBLIC include)
@@ -72,6 +73,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_capture_builder.cpp
     tests/test_capture_queue.cpp
     tests/test_capture_sink.cpp
+    tests/test_client_connection.cpp
     tests/test_client_classifier.cpp
     tests/test_config.cpp
     tests/test_connect_request.cpp

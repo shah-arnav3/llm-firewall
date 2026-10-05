@@ -1,10 +1,18 @@
 #pragma once
-// The request head a client sends to the proxy before a tunnel is opened.
+// The request head a client sends to the proxy, and the connection that reads it.
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
+#include <string_view>
+#include <vector>
+
+#include <boost/asio/steady_timer.hpp>
+
+#include "llmfw/common.hpp"
+#include "llmfw/proxy_context.hpp"
 
 namespace llmfw {
 
@@ -33,5 +41,32 @@ inline constexpr std::size_t kMaxProxyRequestHeadBytes = 16 * 1024;
 /// colon, or one starting with whitespace (obsolete line folding), is invalid.
 /// `out` is reset on every call and is meaningful only for kComplete.
 [[nodiscard]] ProxyRequestParse parseProxyRequest(std::span<const std::uint8_t> buffer, ProxyRequest& out);
+
+/// One accepted client socket, from its request head to a blind tunnel:
+///   - head not complete within listen.idle_timeout, or the client closes first: close
+///   - invalid or oversize head: 400, close
+///   - not CONNECT: 405, count non_connect_requests_rejected, close
+///   - CONNECT: decideScope(), then a BlindTunnel with the reason and any bytes the
+///     client sent after the head
+/// Every handler runs on the socket's executor, which must be a strand.
+class ClientConnection final : public std::enable_shared_from_this<ClientConnection> {
+ public:
+  ClientConnection(tcp::socket socket, std::uint64_t connection_id, ProxyContext& ctx);
+
+  /// Safe from any thread: the work runs on the socket's executor.
+  void start();
+
+ private:
+  void readMore();
+  void onHead(const ProxyRequest& request);
+  void replyAndClose(std::string_view response);
+
+  tcp::socket socket_;
+  std::uint64_t connection_id_;
+  ProxyContext& ctx_;
+  asio::steady_timer timer_;
+  std::vector<std::uint8_t> head_buf_;
+  std::size_t filled_ = 0;
+};
 
 }  // namespace llmfw

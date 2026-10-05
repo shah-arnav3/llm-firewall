@@ -3,9 +3,22 @@
 #include <algorithm>
 #include <string_view>
 
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/write.hpp>
+
+#include "llmfw/blind_tunnel.hpp"
+#include "llmfw/host_scope.hpp"
+#include "llmfw/log.hpp"
+
 namespace llmfw {
 
 namespace {
+
+constexpr std::string_view kBadRequest =
+    "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+constexpr std::string_view kMethodNotAllowed =
+    "HTTP/1.1 405 Method Not Allowed\r\nAllow: CONNECT\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+constexpr std::size_t kReadChunkBytes = 4096;
 
 constexpr std::string_view kCrlf = "\r\n";
 constexpr std::string_view kHeadEnd = "\r\n\r\n";
@@ -151,6 +164,71 @@ ProxyRequestParse parseProxyRequest(std::span<const std::uint8_t> buffer, ProxyR
   }
   out.head_bytes = head_bytes;
   return ProxyRequestParse::kComplete;
+}
+
+ClientConnection::ClientConnection(tcp::socket socket, std::uint64_t connection_id, ProxyContext& ctx)
+    : socket_(std::move(socket)), connection_id_(connection_id), ctx_(ctx), timer_(socket_.get_executor()) {}
+
+void ClientConnection::start() {
+  asio::dispatch(socket_.get_executor(), [self = shared_from_this()] {
+    self->timer_.expires_after(self->ctx_.config.listen.idle_timeout);
+    self->timer_.async_wait([self](const boost::system::error_code& ec) {
+      if (!ec) {
+        boost::system::error_code ignored;
+        self->socket_.close(ignored);
+      }
+    });
+    self->readMore();
+  });
+}
+
+void ClientConnection::readMore() {
+  head_buf_.resize(std::min(filled_ + kReadChunkBytes, kMaxProxyRequestHeadBytes));
+  socket_.async_read_some(
+      asio::buffer(head_buf_.data() + filled_, head_buf_.size() - filled_),
+      [self = shared_from_this()](const boost::system::error_code& ec, std::size_t n) {
+        if (ec) {
+          self->timer_.cancel();  // The client closed, or the head timed out.
+          return;
+        }
+        self->filled_ += n;
+        ProxyRequest request;
+        switch (parseProxyRequest({self->head_buf_.data(), self->filled_}, request)) {
+          case ProxyRequestParse::kNeedMore: self->readMore(); return;
+          case ProxyRequestParse::kInvalid:
+            logWarn("rejected invalid proxy request conn=" + std::to_string(self->connection_id_));
+            self->replyAndClose(kBadRequest);
+            return;
+          case ProxyRequestParse::kComplete: self->onHead(request); return;
+        }
+      });
+}
+
+void ClientConnection::onHead(const ProxyRequest& request) {
+  if (request.kind != ProxyRequestKind::kConnect) {
+    ctx_.counters.non_connect_requests_rejected.fetch_add(1, std::memory_order_relaxed);
+    logInfo("rejected non-CONNECT request conn=" + std::to_string(connection_id_));
+    replyAndClose(kMethodNotAllowed);
+    return;
+  }
+  timer_.cancel();
+  const ScopeResult scope = decideScope(request.host, request.port, ctx_.scope);
+  std::vector<std::uint8_t> leftover(head_buf_.begin() + static_cast<std::ptrdiff_t>(request.head_bytes),
+                                     head_buf_.begin() + static_cast<std::ptrdiff_t>(filled_));
+  std::string host = scope.normalized_host.empty() ? request.host : scope.normalized_host;
+  std::make_shared<BlindTunnel>(std::move(socket_), connection_id_, std::move(host), request.port, scope.reason,
+                                request.user_agent, ctx_, std::move(leftover))
+      ->start();
+}
+
+void ClientConnection::replyAndClose(std::string_view response) {
+  timer_.cancel();
+  asio::async_write(socket_, asio::buffer(response),
+                    [self = shared_from_this()](const boost::system::error_code&, std::size_t) {
+                      boost::system::error_code ignored;
+                      self->socket_.shutdown(tcp::socket::shutdown_both, ignored);
+                      self->socket_.close(ignored);
+                    });
 }
 
 }  // namespace llmfw
