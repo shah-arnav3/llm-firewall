@@ -423,8 +423,9 @@ llm-firewall/
 ## Build and test
 
 The proxy in `proxy/` builds and runs in `metadata_only` mode: it blind-tunnels every
-CONNECT (nothing is decrypted yet) and logs one metadata record per tunnel. The setup
-tool, the launcher and the collector are not built yet.
+CONNECT (nothing is decrypted yet) and logs one metadata record per tunnel.
+`llmfw-setup launch` starts Claude routed through it. Installing (certificates,
+Keychain trust, LaunchAgents) and the collector are not built yet.
 
 Prerequisites (macOS, Apple Clang 15 or newer, C++20):
 
@@ -471,3 +472,26 @@ curl -x http://127.0.0.1:18443 https://example.com/
 Ctrl-C or SIGTERM shuts it down: open tunnels are closed and still logged, and a
 counter summary is printed. Exit codes: 0 clean, 1 unexpected error, 2 bad command
 line or configuration, 3 the metadata log cannot be opened, 4 the port cannot be bound.
+
+### Phase 0: route Claude through the proxy
+
+This checks that Claude.app honors `--proxy-pac-url`, and which hosts it connects to.
+
+1. Start the proxy in one terminal and leave it running:
+   `proxy/build/llmfw-proxy --config config/llm-firewall.yaml`
+2. Quit Claude (Cmd-Q). The launcher refuses while Claude is running, because a
+   running instance ignores new launch flags.
+3. In another terminal: `proxy/build/llmfw-setup launch --config config/llm-firewall.yaml`.
+   This writes the PAC for the configured port to
+   `~/Library/Application Support/llm-firewall/claude.pac` and starts Claude with
+   `--proxy-pac-url` pointing at it.
+4. Use Claude. The proxy's stderr should show lines such as
+   `tunnel open conn=… host=claude.ai:443 reason=scoped_no_cert`.
+5. Quit Claude, then stop the proxy (Ctrl-C). The metadata log has one record per tunnel.
+
+If no `tunnel open` lines appear, Chromium did not load the `file://` PAC. Quit
+Claude and launch again with `--pac-data-url`, which passes the PAC inline instead.
+
+Only the claude.ai interface is routed. The bundled Claude Code components and the
+Cowork VM are not, and launching Claude any other way bypasses llm-firewall; in every
+case Claude keeps working.

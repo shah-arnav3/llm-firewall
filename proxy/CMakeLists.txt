@@ -77,12 +77,17 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LLMFW_PAC_SOURC
 file(READ ${LLMFW_PAC_SOURCE} LLMFW_PAC_TEMPLATE)
 configure_file(cmake/pac_template.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/gen-setup/llmfw/pac_template.hpp @ONLY)
 add_library(llmfw_setup_core STATIC
+  src/setup_launcher.cpp
   src/setup_pac.cpp
   src/setup_paths.cpp)
 target_include_directories(llmfw_setup_core
   PUBLIC  include
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen-setup)
 target_link_libraries(llmfw_setup_core PUBLIC llmfw_core)
+
+add_executable(llmfw-setup src/setup_main.cpp)
+target_link_libraries(llmfw-setup PRIVATE llmfw_setup_core)
+target_compile_definitions(llmfw-setup PRIVATE LLMFW_VERSION="${PROJECT_VERSION}")
 
 if (LLMFW_BUILD_TESTS)
   enable_testing()
@@ -100,12 +105,18 @@ if (LLMFW_BUILD_TESTS)
     tests/test_host_scope.cpp
     tests/test_metadata_logger.cpp
     tests/test_proxy_app.cpp
+    tests/test_setup_launcher.cpp
     tests/test_setup_pac.cpp
     tests/test_setup_paths.cpp
     tests/test_tunnel_registry.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_setup_core GTest::gtest_main)
-  # The config and PAC tests read the committed files in config/.
-  target_compile_definitions(llmfw-tests PRIVATE LLMFW_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
+  # The config and PAC tests read the committed files in config/; the launcher tests
+  # start the fake Claude executable.
+  add_executable(llmfw-fake-claude tests/fake_claude.cpp)
+  target_compile_definitions(llmfw-tests PRIVATE
+    LLMFW_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/.."
+    LLMFW_FAKE_CLAUDE="$<TARGET_FILE:llmfw-fake-claude>")
+  add_dependencies(llmfw-tests llmfw-fake-claude)
   include(GoogleTest)
   gtest_discover_tests(llmfw-tests)
 
@@ -116,4 +127,45 @@ if (LLMFW_BUILD_TESTS)
   add_test(NAME llmfw-proxy.bad-argument COMMAND llmfw-proxy --nope)
   add_test(NAME llmfw-proxy.missing-config COMMAND llmfw-proxy --config /nonexistent/llm-firewall.yaml)
   set_tests_properties(llmfw-proxy.bad-argument llmfw-proxy.missing-config PROPERTIES WILL_FAIL TRUE)
+
+  # The real llmfw-setup, launching a fake Claude.app with a throwaway HOME so the tests
+  # never write to the real ~/Library. The HOME is short (one per build tree) because the
+  # config's socket path under it must stay within macOS's 103-byte limit.
+  # Each launching test gets its own app, so one test's fake Claude still running (the
+  # first run of a new binary is slow while macOS checks it) cannot fail the next.
+  set(LLMFW_FAKE_APP ${CMAKE_CURRENT_BINARY_DIR}/FakeClaude.app)
+  set(LLMFW_FAKE_APP_DATA ${CMAKE_CURRENT_BINARY_DIR}/FakeClaudeDataUrl.app)
+  string(MD5 LLMFW_BUILD_HASH ${CMAKE_CURRENT_BINARY_DIR})
+  string(SUBSTRING ${LLMFW_BUILD_HASH} 0 8 LLMFW_BUILD_HASH)
+  set(LLMFW_FAKE_HOME /tmp/llmfw-home-${LLMFW_BUILD_HASH})
+  add_custom_command(TARGET llmfw-fake-claude POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LLMFW_FAKE_APP}/Contents/MacOS
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:llmfw-fake-claude> ${LLMFW_FAKE_APP}/Contents/MacOS/Claude
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LLMFW_FAKE_APP_DATA}/Contents/MacOS
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:llmfw-fake-claude> ${LLMFW_FAKE_APP_DATA}/Contents/MacOS/Claude)
+  set(LLMFW_REPO_CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/../config/llm-firewall.yaml)
+  add_test(NAME llmfw-setup.help COMMAND llmfw-setup --help)
+  add_test(NAME llmfw-setup.version COMMAND llmfw-setup --version)
+  set_tests_properties(llmfw-setup.version PROPERTIES PASS_REGULAR_EXPRESSION "^llmfw-setup ${PROJECT_VERSION}")
+  add_test(NAME llmfw-setup.bad-command COMMAND llmfw-setup nope)
+  add_test(NAME llmfw-setup.missing-config COMMAND llmfw-setup launch --config /nonexistent/llm-firewall.yaml)
+  add_test(NAME llmfw-setup.missing-claude
+    COMMAND llmfw-setup launch --config ${LLMFW_REPO_CONFIG} --claude-app /nonexistent/Claude.app)
+  set_tests_properties(llmfw-setup.bad-command llmfw-setup.missing-config llmfw-setup.missing-claude
+    PROPERTIES WILL_FAIL TRUE ENVIRONMENT "HOME=${LLMFW_FAKE_HOME}")
+  add_test(NAME llmfw-setup.launch
+    COMMAND llmfw-setup launch --config ${LLMFW_REPO_CONFIG} --claude-app ${LLMFW_FAKE_APP})
+  set_tests_properties(llmfw-setup.launch PROPERTIES
+    ENVIRONMENT "HOME=${LLMFW_FAKE_HOME}"
+    PASS_REGULAR_EXPRESSION "Launched Claude \\(pid [0-9]+\\) routing claude.ai and anthropic.com to 127.0.0.1:18443"
+    FIXTURES_SETUP rendered-pac)
+  add_test(NAME llmfw-setup.launch-wrote-pac
+    COMMAND ${CMAKE_COMMAND} -E cat "${LLMFW_FAKE_HOME}/Library/Application Support/llm-firewall/claude.pac")
+  set_tests_properties(llmfw-setup.launch-wrote-pac PROPERTIES
+    PASS_REGULAR_EXPRESSION "PROXY 127.0.0.1:18443; DIRECT"
+    FIXTURES_REQUIRED rendered-pac)
+  add_test(NAME llmfw-setup.launch-data-url
+    COMMAND llmfw-setup launch --config ${LLMFW_REPO_CONFIG} --claude-app ${LLMFW_FAKE_APP_DATA} --pac-data-url)
+  set_tests_properties(llmfw-setup.launch-data-url PROPERTIES
+    ENVIRONMENT "HOME=${LLMFW_FAKE_HOME}" PASS_REGULAR_EXPRESSION "PAC: inline data: URL")
 endif()
