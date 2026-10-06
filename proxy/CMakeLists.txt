@@ -56,6 +56,7 @@ add_library(llmfw_core STATIC
   src/config.cpp
   src/connect_handler.cpp
   src/counters.cpp
+  src/fs_util.cpp
   src/host_scope.cpp
   src/listener.cpp
   src/log.cpp

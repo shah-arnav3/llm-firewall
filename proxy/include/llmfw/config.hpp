@@ -115,6 +115,10 @@ class ConfigError : public std::runtime_error {
 /// @throws ConfigError on an unreadable file, invalid YAML or any violation.
 [[nodiscard]] ProxyConfig loadProxyConfig(const std::filesystem::path& file);
 
+/// $HOME, or the passwd entry's home directory if $HOME is unset or empty.
+/// @throws ConfigError if neither is available.
+[[nodiscard]] std::filesystem::path homeDirectory();
+
 /// ~/Library/Application Support/llm-firewall/llm-firewall.yaml
 /// @throws ConfigError if the home directory cannot be determined.
 [[nodiscard]] std::filesystem::path defaultConfigPath();

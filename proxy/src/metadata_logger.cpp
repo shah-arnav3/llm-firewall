@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cerrno>
 #include <system_error>
-#include <vector>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -11,32 +10,16 @@
 
 #include <google/protobuf/util/json_util.h>
 
+#include "llmfw/fs_util.hpp"
+
 namespace llmfw {
 
 namespace {
 
-constexpr mode_t kDirMode = 0700;
 constexpr mode_t kFileMode = 0600;
 
 [[noreturn]] void throwErrno(const std::string& what) {
   throw std::system_error(errno, std::generic_category(), what);
-}
-
-/// Creates each missing directory on the way to `dir` with mode 0700, leaving
-/// existing ones (such as ~/Library/Logs) untouched.
-void createPrivateDirectories(const std::filesystem::path& dir) {
-  std::vector<std::filesystem::path> missing;
-  for (std::filesystem::path p = dir; !p.empty() && !std::filesystem::exists(p); p = p.parent_path()) {
-    missing.push_back(p);
-    if (p == p.parent_path()) {
-      break;
-    }
-  }
-  for (auto it = missing.rbegin(); it != missing.rend(); ++it) {
-    if (::mkdir(it->c_str(), kDirMode) != 0 && errno != EEXIST) {
-      throwErrno("cannot create " + it->string());
-    }
-  }
 }
 
 std::filesystem::path rotated(const std::filesystem::path& path, unsigned n) {

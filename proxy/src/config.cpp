@@ -30,15 +30,6 @@ std::string toLower(std::string s) {
   return s;
 }
 
-std::filesystem::path homeDirectory() {
-  if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
-    return home;
-  }
-  if (const passwd* pw = getpwuid(getuid()); pw != nullptr && pw->pw_dir != nullptr) {
-    return pw->pw_dir;
-  }
-  throw ConfigError("cannot determine the home directory ($HOME is unset and getpwuid failed)");
-}
 
 std::filesystem::path expandTilde(const std::string& raw) {
   if (raw == "~") {
@@ -321,6 +312,16 @@ MetadataLogConfig parseMetadataLog(const Section& log) {
 }
 
 }  // namespace
+
+std::filesystem::path homeDirectory() {
+  if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+    return home;
+  }
+  if (const passwd* pw = getpwuid(getuid()); pw != nullptr && pw->pw_dir != nullptr) {
+    return pw->pw_dir;
+  }
+  throw ConfigError("cannot determine the home directory ($HOME is unset and getpwuid failed)");
+}
 
 std::filesystem::path IpcConfig::socketPath() const { return socket_dir / socket_name; }
 
