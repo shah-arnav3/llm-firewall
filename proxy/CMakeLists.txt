@@ -71,6 +71,19 @@ add_executable(llmfw-proxy src/proxy_main.cpp)
 target_link_libraries(llmfw-proxy PRIVATE llmfw_core)
 target_compile_definitions(llmfw-proxy PRIVATE LLMFW_VERSION="${PROJECT_VERSION}")
 
+# Setup library. It embeds config/claude.pac, and editing that file re-runs configure.
+set(LLMFW_PAC_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../config/claude.pac)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LLMFW_PAC_SOURCE})
+file(READ ${LLMFW_PAC_SOURCE} LLMFW_PAC_TEMPLATE)
+configure_file(cmake/pac_template.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/gen-setup/llmfw/pac_template.hpp @ONLY)
+add_library(llmfw_setup_core STATIC
+  src/setup_pac.cpp
+  src/setup_paths.cpp)
+target_include_directories(llmfw_setup_core
+  PUBLIC  include
+  PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen-setup)
+target_link_libraries(llmfw_setup_core PUBLIC llmfw_core)
+
 if (LLMFW_BUILD_TESTS)
   enable_testing()
   find_package(GTest CONFIG REQUIRED)
@@ -87,9 +100,11 @@ if (LLMFW_BUILD_TESTS)
     tests/test_host_scope.cpp
     tests/test_metadata_logger.cpp
     tests/test_proxy_app.cpp
+    tests/test_setup_pac.cpp
+    tests/test_setup_paths.cpp
     tests/test_tunnel_registry.cpp)
-  target_link_libraries(llmfw-tests PRIVATE llmfw_core GTest::gtest_main)
-  # The config tests load the committed example config/llm-firewall.yaml.
+  target_link_libraries(llmfw-tests PRIVATE llmfw_setup_core GTest::gtest_main)
+  # The config and PAC tests read the committed files in config/.
   target_compile_definitions(llmfw-tests PRIVATE LLMFW_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
   include(GoogleTest)
   gtest_discover_tests(llmfw-tests)
