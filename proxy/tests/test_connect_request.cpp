@@ -63,6 +63,16 @@ TEST(ParseProxyRequest, NeedMoreUntilBlankLine) {
   EXPECT_EQ(parse(full), ProxyRequestParse::kComplete);
 }
 
+TEST(ParseProxyRequest, RecordsMethodAndTarget) {
+  ProxyRequest req;
+  ASSERT_EQ(parse("GET /proxy.pac HTTP/1.1\r\n\r\n", req), ProxyRequestParse::kComplete);
+  EXPECT_EQ(req.method, "GET");
+  EXPECT_EQ(req.target, "/proxy.pac");
+  ASSERT_EQ(parse("CONNECT claude.ai:443 HTTP/1.1\r\n\r\n", req), ProxyRequestParse::kComplete);
+  EXPECT_EQ(req.method, "CONNECT");
+  EXPECT_EQ(req.target, "claude.ai:443");
+}
+
 TEST(ParseProxyRequest, ClassifiesAbsoluteFormGetAsOther) {
   ProxyRequest req;
   ASSERT_EQ(parse("GET http://claude.ai/ HTTP/1.1\r\nHost: claude.ai\r\n\r\n", req), ProxyRequestParse::kComplete);

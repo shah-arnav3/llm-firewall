@@ -20,6 +20,8 @@ enum class ProxyRequestKind { kConnect, kOther };
 
 struct ProxyRequest {
   ProxyRequestKind kind = ProxyRequestKind::kOther;
+  std::string method;          ///< As sent, for example "CONNECT" or "GET".
+  std::string target;          ///< The request target as sent, for example "claude.ai:443" or "/proxy.pac".
   std::string host;            ///< CONNECT only: the authority host, without brackets for IPv6.
   std::uint16_t port = 0;      ///< CONNECT only.
   std::string user_agent;      ///< First User-Agent header, trimmed. Empty if absent.

@@ -111,6 +111,8 @@ bool parseRequestLine(std::string_view line, ProxyRequest& out) {
   if (!isToken(method) || target.empty() || (version != "HTTP/1.1" && version != "HTTP/1.0")) {
     return false;
   }
+  out.method.assign(method);
+  out.target.assign(target);
   if (method != "CONNECT") {
     out.kind = ProxyRequestKind::kOther;
     return true;
