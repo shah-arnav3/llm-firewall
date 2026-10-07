@@ -9,6 +9,9 @@
 
 namespace llmfw {
 
+/// The path the proxy serves the rendered PAC at.
+inline constexpr std::string_view kPacPath = "/proxy.pac";
+
 /// config/claude.pac, embedded at build time.
 [[nodiscard]] std::string_view pacTemplate();
 

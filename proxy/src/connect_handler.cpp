@@ -9,6 +9,7 @@
 #include "llmfw/blind_tunnel.hpp"
 #include "llmfw/host_scope.hpp"
 #include "llmfw/log.hpp"
+#include "llmfw/pac.hpp"
 
 namespace llmfw {
 
@@ -19,6 +20,11 @@ constexpr std::string_view kBadRequest =
 constexpr std::string_view kMethodNotAllowed =
     "HTTP/1.1 405 Method Not Allowed\r\nAllow: CONNECT\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 constexpr std::size_t kReadChunkBytes = 4096;
+
+std::string pacResponse(std::string_view pac) {
+  return "HTTP/1.1 200 OK\r\nContent-Type: application/x-ns-proxy-autoconfig\r\nContent-Length: " +
+         std::to_string(pac.size()) + "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n" + std::string(pac);
+}
 
 constexpr std::string_view kCrlf = "\r\n";
 constexpr std::string_view kHeadEnd = "\r\n\r\n";
@@ -199,7 +205,7 @@ void ClientConnection::readMore() {
           case ProxyRequestParse::kNeedMore: self->readMore(); return;
           case ProxyRequestParse::kInvalid:
             logWarn("rejected invalid proxy request conn=" + std::to_string(self->connection_id_));
-            self->replyAndClose(kBadRequest);
+            self->replyAndClose(std::string(kBadRequest));
             return;
           case ProxyRequestParse::kComplete: self->onHead(request); return;
         }
@@ -207,10 +213,15 @@ void ClientConnection::readMore() {
 }
 
 void ClientConnection::onHead(const ProxyRequest& request) {
+  if (request.kind != ProxyRequestKind::kConnect && request.method == "GET" && request.target == kPacPath) {
+    logInfo("served PAC conn=" + std::to_string(connection_id_));
+    replyAndClose(pacResponse(ctx_.pac));
+    return;
+  }
   if (request.kind != ProxyRequestKind::kConnect) {
     ctx_.counters.non_connect_requests_rejected.fetch_add(1, std::memory_order_relaxed);
     logInfo("rejected non-CONNECT request conn=" + std::to_string(connection_id_));
-    replyAndClose(kMethodNotAllowed);
+    replyAndClose(std::string(kMethodNotAllowed));
     return;
   }
   timer_.cancel();
@@ -223,9 +234,10 @@ void ClientConnection::onHead(const ProxyRequest& request) {
       ->start();
 }
 
-void ClientConnection::replyAndClose(std::string_view response) {
+void ClientConnection::replyAndClose(std::string response) {
   timer_.cancel();
-  asio::async_write(socket_, asio::buffer(response),
+  response_ = std::move(response);
+  asio::async_write(socket_, asio::buffer(response_),
                     [self = shared_from_this()](const boost::system::error_code&, std::size_t) {
                       boost::system::error_code ignored;
                       self->socket_.shutdown(tcp::socket::shutdown_both, ignored);

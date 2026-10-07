@@ -47,7 +47,8 @@ inline constexpr std::size_t kMaxProxyRequestHeadBytes = 16 * 1024;
 /// One accepted client socket, from its request head to a blind tunnel:
 ///   - head not complete within listen.idle_timeout, or the client closes first: close
 ///   - invalid or oversize head: 400, close
-///   - not CONNECT: 405, count non_connect_requests_rejected, close
+///   - GET /proxy.pac: 200 with ctx.pac (the PAC Claude is pointed at), close
+///   - any other non-CONNECT request: 405, count non_connect_requests_rejected, close
 ///   - CONNECT: decideScope(), then a BlindTunnel with the reason and any bytes the
 ///     client sent after the head
 /// Every handler runs on the socket's executor, which must be a strand.
@@ -61,7 +62,7 @@ class ClientConnection final : public std::enable_shared_from_this<ClientConnect
  private:
   void readMore();
   void onHead(const ProxyRequest& request);
-  void replyAndClose(std::string_view response);
+  void replyAndClose(std::string response);
 
   tcp::socket socket_;
   std::uint64_t connection_id_;
@@ -69,6 +70,7 @@ class ClientConnection final : public std::enable_shared_from_this<ClientConnect
   asio::steady_timer timer_;
   std::vector<std::uint8_t> head_buf_;
   std::size_t filled_ = 0;
+  std::string response_;  ///< Kept alive while it is being written.
 };
 
 }  // namespace llmfw

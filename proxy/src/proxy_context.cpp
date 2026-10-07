@@ -18,6 +18,7 @@
 #include "llmfw/listener.hpp"
 #include "llmfw/log.hpp"
 #include "llmfw/metadata_logger.hpp"
+#include "llmfw/pac.hpp"
 
 namespace llmfw {
 
@@ -180,7 +181,8 @@ int ProxyApp::run() {
   const CaptureBuildContext build{classifier, counters};
   const HostScope scope(config_.decrypt_hosts);
   TunnelRegistry tunnels;
-  ProxyContext ctx{config_, scope, queue, counters, build, tunnels};
+  std::string pac;  // Rendered once the listener has bound, before any connection is accepted.
+  ProxyContext ctx{config_, scope, queue, counters, build, tunnels, pac};
   CaptureDrain drain(queue, *sink, counters);
   drain.start();
 
@@ -194,6 +196,7 @@ int ProxyApp::run() {
     drain.stop(kDrainGrace);
     return kExitBind;
   }
+  pac = renderPac(pacTemplate(), listener->localEndpoint().port());
   state.listener = listener.get();
   state.tunnels = &tunnels;
   state.signals.async_wait([&state](const boost::system::error_code& ec, int) {

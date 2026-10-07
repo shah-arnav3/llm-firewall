@@ -136,6 +136,21 @@ TEST(ProxyApp, LogsTunnelsStillOpenAtShutdown) {
   EXPECT_FALSE(records[0].proxy_instance_id().empty());
 }
 
+TEST(ProxyApp, ServesThePacForTheBoundPort) {
+  const TempDir tmp;
+  const std::uint16_t port = test::closedPort();
+  RunningApp running(appConfig(tmp.path() / "metadata.jsonl", port));
+  asio::io_context io;
+  tcp::socket client(io);
+  ASSERT_TRUE(connectWhenReady(client, port));
+  asio::write(client, asio::buffer(std::string("GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")));
+  const std::string response = readToEnd(client);
+  EXPECT_TRUE(response.starts_with("HTTP/1.1 200 OK\r\n")) << response.substr(0, 80);
+  EXPECT_NE(response.find("return \"PROXY 127.0.0.1:" + std::to_string(port) + "; DIRECT\";"), std::string::npos);
+  EXPECT_EQ(response.find("{{"), std::string::npos);
+  EXPECT_EQ(running.stopAndWait(), kExitOk);
+}
+
 TEST(ProxyApp, StopRequestedBeforeRunReturnsPromptly) {
   const TempDir tmp;
   ProxyApp app(appConfig(tmp.path() / "metadata.jsonl", test::closedPort()));

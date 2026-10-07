@@ -21,6 +21,7 @@ using test::readToEnd;
 using test::Upstream;
 
 const std::string kUserAgent = "Mozilla/5.0 Claude/2.9 Electron/38";
+const std::string kTestPac = "function FindProxyForURL(url, host) { return \"DIRECT\"; }\n";
 
 /// A listener on a free loopback port, served by two I/O threads.
 class ProxyHarness {
@@ -65,7 +66,8 @@ class ProxyHarness {
   ClientClassifier classifier_{{{ClientPathTag::kUi, {"Electron/"}}}};
   CaptureBuildContext build_{classifier_, counters_};
   TunnelRegistry tunnels_;
-  ProxyContext context_{config_, scope_, queue_, counters_, build_, tunnels_};
+  std::string pac_ = kTestPac;
+  ProxyContext context_{config_, scope_, queue_, counters_, build_, tunnels_, pac_};
   asio::io_context io_;
   asio::executor_work_guard<asio::io_context::executor_type> work_ = asio::make_work_guard(io_);
   std::unique_ptr<Listener> listener_;
@@ -136,6 +138,29 @@ TEST(ClientConnection, RejectsNonConnectWith405) {
   EXPECT_EQ(proxy.queue().popWait(milliseconds(200)), nullptr);
 }
 
+TEST(ClientConnection, ServesThePacOnGet) {
+  ProxyHarness proxy;
+  tcp::socket client = proxy.connect();
+  asio::write(client, asio::buffer(std::string("GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")));
+  EXPECT_EQ(readToEnd(client), "HTTP/1.1 200 OK\r\nContent-Type: application/x-ns-proxy-autoconfig\r\nContent-Length: " +
+                                   std::to_string(kTestPac.size()) +
+                                   "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n" + kTestPac);
+  EXPECT_EQ(proxy.counters().non_connect_requests_rejected.load(), 0u);
+  EXPECT_EQ(proxy.queue().popWait(milliseconds(200)), nullptr) << "serving the PAC is not a capture";
+}
+
+TEST(ClientConnection, ServesThePacOnlyForGetOnItsPath) {
+  ProxyHarness proxy;
+  for (const char* head : {"GET /proxy.pac.bak HTTP/1.1\r\n\r\n", "GET /proxy.pac?x=1 HTTP/1.1\r\n\r\n",
+                           "POST /proxy.pac HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+                           "GET http://127.0.0.1/proxy.pac HTTP/1.1\r\n\r\n"}) {
+    tcp::socket client = proxy.connect();
+    asio::write(client, asio::buffer(std::string(head)));
+    EXPECT_TRUE(readToEnd(client).starts_with("HTTP/1.1 405 Method Not Allowed")) << head;
+  }
+  EXPECT_EQ(proxy.counters().non_connect_requests_rejected.load(), 4u);
+}
+
 TEST(ClientConnection, RejectsMalformedHeadWith400) {
   ProxyHarness proxy;
   tcp::socket client = proxy.connect();
@@ -194,7 +219,8 @@ TEST(Listener, RejectsNonLoopbackAddress) {
   ClientClassifier classifier({});
   CaptureBuildContext build{classifier, counters};
   TunnelRegistry tunnels;
-  ProxyContext context{config, scope, queue, counters, build, tunnels};
+  const std::string pac;
+  ProxyContext context{config, scope, queue, counters, build, tunnels, pac};
   for (const char* address : {"0.0.0.0", "192.168.1.10", "localhost"}) {
     ListenConfig listen;
     listen.address = address;

@@ -37,7 +37,8 @@ TEST(TunnelRegistry, CallsBackOnlyWhenLastOpenTunnelIsRemoved) {
   ClientClassifier classifier({});
   CaptureBuildContext build{classifier, counters};
   TunnelRegistry registry;
-  ProxyContext ctx{config, scope, queue, counters, build, registry};
+  const std::string pac;
+  ProxyContext ctx{config, scope, queue, counters, build, registry, pac};
   const auto tunnel = std::make_shared<BlindTunnel>(tcp::socket(io), 1, "host", 1, TunnelReasonTag::kUnscopedHost, "",
                                                     ctx, std::vector<std::uint8_t>{});
   ASSERT_TRUE(registry.add(1, tunnel));

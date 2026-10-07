@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 #include "llmfw/capture_builder.hpp"
@@ -50,6 +51,7 @@ struct ProxyContext {
   ProxyCounters& counters;
   const CaptureBuildContext& build;
   TunnelRegistry& tunnels;
+  const std::string& pac;  ///< The rendered PAC served at kPacPath.
 };
 
 /// Process exit codes of llmfw-proxy.
@@ -66,7 +68,8 @@ enum ExitCode : int {
 /// run():
 ///   - Rejects proxy.mode "full" (kExitConfig): decryption is not implemented.
 ///   - Startup: instance id -> metadata log (kExitSink on failure) -> shared objects ->
-///     drain -> listener (kExitBind on failure) -> listen.io_threads I/O threads.
+///     drain -> listener (kExitBind on failure) -> render the PAC for the bound port ->
+///     listen.io_threads I/O threads.
 ///   - Shutdown, on SIGINT, SIGTERM or requestStop(): stop accepting -> close every open
 ///     tunnel (each is still captured) -> once they have finished, or after 2 s, stop
 ///     the I/O threads -> drain the queue to the log for up to 2 s -> log a counter
