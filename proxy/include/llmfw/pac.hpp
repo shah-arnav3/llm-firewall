@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace llmfw::setup {
+namespace llmfw {
 
 /// config/claude.pac, embedded at build time.
 [[nodiscard]] std::string_view pacTemplate();
@@ -27,4 +27,4 @@ class TemplateError : public std::runtime_error {
 /// @throws std::system_error on any filesystem failure.
 void writePacFile(const std::filesystem::path& pac_file, std::string_view pac);
 
-}  // namespace llmfw::setup
+}  // namespace llmfw

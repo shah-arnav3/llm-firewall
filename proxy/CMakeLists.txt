@@ -46,6 +46,12 @@ protobuf_generate(
 target_include_directories(llmfw_proto SYSTEM PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/gen)
 target_link_libraries(llmfw_proto PUBLIC protobuf::libprotobuf)
 
+# The PAC template config/claude.pac is embedded in the core library; editing it re-runs configure.
+set(LLMFW_PAC_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../config/claude.pac)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LLMFW_PAC_SOURCE})
+file(READ ${LLMFW_PAC_SOURCE} LLMFW_PAC_TEMPLATE)
+configure_file(cmake/pac_template.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/gen-pac/llmfw/pac_template.hpp @ONLY)
+
 # Core proxy library, linked by the tests
 add_library(llmfw_core STATIC
   src/blind_tunnel.cpp
@@ -61,8 +67,11 @@ add_library(llmfw_core STATIC
   src/listener.cpp
   src/log.cpp
   src/metadata_logger.cpp
+  src/pac.cpp
   src/proxy_context.cpp)
-target_include_directories(llmfw_core PUBLIC include)
+target_include_directories(llmfw_core
+  PUBLIC  include
+  PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen-pac)
 target_link_libraries(llmfw_core
   PUBLIC  llmfw_flags llmfw_proto Boost::headers
   PRIVATE yaml-cpp::yaml-cpp)
@@ -71,18 +80,11 @@ add_executable(llmfw-proxy src/proxy_main.cpp)
 target_link_libraries(llmfw-proxy PRIVATE llmfw_core)
 target_compile_definitions(llmfw-proxy PRIVATE LLMFW_VERSION="${PROJECT_VERSION}")
 
-# Setup library. It embeds config/claude.pac, and editing that file re-runs configure.
-set(LLMFW_PAC_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../config/claude.pac)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LLMFW_PAC_SOURCE})
-file(READ ${LLMFW_PAC_SOURCE} LLMFW_PAC_TEMPLATE)
-configure_file(cmake/pac_template.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/gen-setup/llmfw/pac_template.hpp @ONLY)
+# Setup library
 add_library(llmfw_setup_core STATIC
   src/setup_launcher.cpp
-  src/setup_pac.cpp
   src/setup_paths.cpp)
-target_include_directories(llmfw_setup_core
-  PUBLIC  include
-  PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen-setup)
+target_include_directories(llmfw_setup_core PUBLIC include)
 target_link_libraries(llmfw_setup_core PUBLIC llmfw_core)
 
 add_executable(llmfw-setup src/setup_main.cpp)
@@ -105,8 +107,8 @@ if (LLMFW_BUILD_TESTS)
     tests/test_host_scope.cpp
     tests/test_metadata_logger.cpp
     tests/test_proxy_app.cpp
+    tests/test_pac.cpp
     tests/test_setup_launcher.cpp
-    tests/test_setup_pac.cpp
     tests/test_setup_paths.cpp
     tests/test_tunnel_registry.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_setup_core GTest::gtest_main)

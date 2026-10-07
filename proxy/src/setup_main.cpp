@@ -20,7 +20,7 @@
 
 #include "llmfw/config.hpp"
 #include "llmfw/setup_launcher.hpp"
-#include "llmfw/setup_pac.hpp"
+#include "llmfw/pac.hpp"
 #include "llmfw/setup_paths.hpp"
 
 namespace {
@@ -75,12 +75,12 @@ int launch(int argc, char** argv) {
     return kExitPreflight;
   }
 
-  const std::string pac = setup::renderPac(setup::pacTemplate(), config.listen.port);
+  const std::string pac = llmfw::renderPac(llmfw::pacTemplate(), config.listen.port);
   std::string pac_url;
   if (data_url) {
     pac_url = setup::dataUrl(pac);
   } else {
-    setup::writePacFile(paths.pac_file, pac);
+    llmfw::writePacFile(paths.pac_file, pac);
     pac_url = setup::fileUrl(paths.pac_file);
   }
   const setup::LaunchSpec spec = setup::buildLaunchSpec(paths.claude_app, pac_url);

@@ -3,8 +3,8 @@
 
 #include <string_view>
 
-namespace llmfw::setup {
+namespace llmfw {
 
 inline constexpr std::string_view kEmbeddedPacTemplate = R"llmfwpac(@LLMFW_PAC_TEMPLATE@)llmfwpac";
 
-}  // namespace llmfw::setup
+}  // namespace llmfw

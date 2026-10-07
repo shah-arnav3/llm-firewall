@@ -10,6 +10,7 @@ leak-*
 timeout-*
 oom-*
 compile_commands.json
+.cache/
 CMakeUserPresets.json
 *.o
 *.a

@@ -1,9 +1,9 @@
-#include "llmfw/setup_pac.hpp"
+#include "llmfw/pac.hpp"
 
 #include "llmfw/fs_util.hpp"
 #include "llmfw/pac_template.hpp"
 
-namespace llmfw::setup {
+namespace llmfw {
 
 namespace {
 
@@ -33,4 +33,4 @@ void writePacFile(const std::filesystem::path& pac_file, std::string_view pac) {
   writeFileAtomically(pac_file, pac, kPacMode);
 }
 
-}  // namespace llmfw::setup
+}  // namespace llmfw

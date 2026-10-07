@@ -5,9 +5,9 @@
 
 #include <sys/stat.h>
 
-#include "llmfw/setup_pac.hpp"
+#include "llmfw/pac.hpp"
 
-namespace llmfw::setup {
+namespace llmfw {
 namespace {
 
 namespace fs = std::filesystem;
@@ -92,4 +92,4 @@ TEST(WritePacFile, ThrowsWhenTheDirectoryCannotBeCreated) {
 }
 
 }  // namespace
-}  // namespace llmfw::setup
+}  // namespace llmfw
