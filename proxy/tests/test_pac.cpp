@@ -44,6 +44,11 @@ TEST(PacTemplate, IsTheCommittedConfigFile) {
   EXPECT_EQ(pacTemplate(), readFile(fs::path(LLMFW_REPO_DIR) / "config" / "claude.pac"));
 }
 
+TEST(PacUrl, PointsAtThePacPath) {
+  EXPECT_EQ(pacUrl("127.0.0.1", 18443), "http://127.0.0.1:18443/proxy.pac");
+  EXPECT_EQ(pacUrl("::1", 18443), "http://[::1]:18443/proxy.pac");
+}
+
 TEST(RenderPac, ReplacesEveryPortToken) {
   const std::string pac = renderPac(pacTemplate(), 18443);
   EXPECT_EQ(pac.find("{{"), std::string::npos);

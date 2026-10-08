@@ -12,6 +12,10 @@ namespace llmfw {
 /// The path the proxy serves the rendered PAC at.
 inline constexpr std::string_view kPacPath = "/proxy.pac";
 
+/// The URL Claude fetches the PAC from: "http://<address>:<port>/proxy.pac", with an
+/// IPv6 address in brackets.
+[[nodiscard]] std::string pacUrl(std::string_view listen_address, std::uint16_t port);
+
 /// config/claude.pac, embedded at build time.
 [[nodiscard]] std::string_view pacTemplate();
 

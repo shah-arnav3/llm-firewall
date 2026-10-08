@@ -14,6 +14,12 @@ constexpr mode_t kPacMode = 0644;
 
 std::string_view pacTemplate() { return kEmbeddedPacTemplate; }
 
+std::string pacUrl(std::string_view listen_address, std::uint16_t port) {
+  const bool ipv6 = listen_address.find(':') != std::string_view::npos;
+  return "http://" + (ipv6 ? "[" + std::string(listen_address) + "]" : std::string(listen_address)) + ":" +
+         std::to_string(port) + std::string(kPacPath);
+}
+
 std::string renderPac(std::string_view template_text, std::uint16_t proxy_port) {
   std::string pac(template_text);
   const std::string port = std::to_string(proxy_port);

@@ -84,7 +84,8 @@ target_compile_definitions(llmfw-proxy PRIVATE LLMFW_VERSION="${PROJECT_VERSION}
 # Setup library
 add_library(llmfw_setup_core STATIC
   src/setup_launcher.cpp
-  src/setup_paths.cpp)
+  src/setup_paths.cpp
+  src/setup_profile.cpp)
 target_include_directories(llmfw_setup_core PUBLIC include)
 target_link_libraries(llmfw_setup_core PUBLIC llmfw_core)
 
@@ -112,6 +113,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_pac.cpp
     tests/test_setup_launcher.cpp
     tests/test_setup_paths.cpp
+    tests/test_setup_profile.cpp
     tests/test_tunnel_registry.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_setup_core GTest::gtest_main)
   # The config and PAC tests read the committed files in config/; the launcher tests
@@ -168,6 +170,18 @@ if (LLMFW_BUILD_TESTS)
   set_tests_properties(llmfw-setup.launch-wrote-pac PROPERTIES
     PASS_REGULAR_EXPRESSION "PROXY 127.0.0.1:18443; DIRECT"
     FIXTURES_REQUIRED rendered-pac)
+  set(LLMFW_FAKE_PROFILE ${CMAKE_CURRENT_BINARY_DIR}/test-profile.mobileconfig)
+  add_test(NAME llmfw-setup.profile
+    COMMAND llmfw-setup profile --config ${LLMFW_REPO_CONFIG} --output ${LLMFW_FAKE_PROFILE})
+  set_tests_properties(llmfw-setup.profile PROPERTIES
+    ENVIRONMENT "HOME=${LLMFW_FAKE_HOME}"
+    PASS_REGULAR_EXPRESSION "egressProxyPacUrl to http://127.0.0.1:18443/proxy.pac"
+    FIXTURES_SETUP written-profile)
+  add_test(NAME llmfw-setup.profile-is-valid COMMAND /usr/bin/plutil -lint ${LLMFW_FAKE_PROFILE})
+  set_tests_properties(llmfw-setup.profile-is-valid PROPERTIES FIXTURES_REQUIRED written-profile)
+  add_test(NAME llmfw-setup.profile-bad-scope
+    COMMAND llmfw-setup profile --config ${LLMFW_REPO_CONFIG} --output ${LLMFW_FAKE_PROFILE} --scope everyone)
+  set_tests_properties(llmfw-setup.profile-bad-scope PROPERTIES WILL_FAIL TRUE)
   add_test(NAME llmfw-setup.launch-data-url
     COMMAND llmfw-setup launch --config ${LLMFW_REPO_CONFIG} --claude-app ${LLMFW_FAKE_APP_DATA} --pac-data-url)
   set_tests_properties(llmfw-setup.launch-data-url PROPERTIES
