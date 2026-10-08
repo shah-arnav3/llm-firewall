@@ -68,7 +68,8 @@ add_library(llmfw_core STATIC
   src/log.cpp
   src/metadata_logger.cpp
   src/pac.cpp
-  src/proxy_context.cpp)
+  src/proxy_context.cpp
+  src/random_id.cpp)
 target_include_directories(llmfw_core
   PUBLIC  include
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen-pac)
@@ -107,6 +108,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_host_scope.cpp
     tests/test_metadata_logger.cpp
     tests/test_proxy_app.cpp
+    tests/test_random_id.cpp
     tests/test_pac.cpp
     tests/test_setup_launcher.cpp
     tests/test_setup_paths.cpp
