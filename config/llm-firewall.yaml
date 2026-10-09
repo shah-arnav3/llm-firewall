@@ -15,8 +15,8 @@ version: 1
 proxy:
   # Loopback only. The proxy refuses to start on any non-loopback address.
   listen_address: 127.0.0.1
-  # The PAC file, the launcher (HTTPS_PROXY) and this setting must agree. `llmfw-setup`
-  # templates this port into all three.
+  # The proxy serves its PAC on this port, and `llmfw-setup profile` writes the same
+  # port into Claude's egressProxyPacUrl, so regenerate the profile after changing it.
   listen_port: 18443
   # Boost.Asio io_context worker threads.
   io_threads: 2

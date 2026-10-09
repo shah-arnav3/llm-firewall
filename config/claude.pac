@@ -1,15 +1,19 @@
 // llm-firewall PAC template.
 //
-// `llmfw-setup install` fills in {{PROXY_PORT}} (from proxy.listen_port) and writes
-// the result to ~/Library/Application Support/llm-firewall/claude.pac. The launcher
-// passes it ONLY to Claude.app via --proxy-pac-url. System proxy settings and
-// browsers are never changed.
+// llmfw-proxy replaces the port token below with the port it is listening on and
+// serves the result at http://127.0.0.1:<port>/proxy.pac. Claude Desktop fetches it at
+// launch because its egressProxyPacUrl setting points there (the profile from
+// `llmfw-setup profile`). The app evaluates it per request, the Cowork VM gets its own
+// copy, and the Claude Code engine is given the one proxy it returns for the inference
+// endpoint. System proxy settings and browsers are never changed.
 //
 // Behavior:
 //   * Only https:// and wss:// requests to claude.ai, *.claude.ai, anthropic.com and
 //     *.anthropic.com go to the proxy. Everything else returns "DIRECT".
 //   * "; DIRECT" is the fail-open fallback. If nothing is listening on the port,
-//     Chromium connects directly and Claude keeps working. Only logging is lost.
+//     Claude's app connects directly and keeps working. Only logging is lost. (If the
+//     proxy is down when Claude starts, the PAC cannot be fetched and Claude connects
+//     directly for that whole session.)
 //   * Plain http:// is never proxied, so the proxy only has to handle CONNECT.
 //
 // Keep this function trivial. Chromium evaluates it for every request.

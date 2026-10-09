@@ -2,7 +2,6 @@
 // The PAC file that routes only Claude's hosts to the proxy.
 
 #include <cstdint>
-#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -28,10 +27,5 @@ class TemplateError : public std::runtime_error {
 /// Replaces every "{{PROXY_PORT}}" in `template_text` with `proxy_port`.
 /// @throws TemplateError if any "{{" remains, so a PAC with an unknown token is never written.
 [[nodiscard]] std::string renderPac(std::string_view template_text, std::uint16_t proxy_port);
-
-/// Writes the rendered PAC to `pac_file` atomically with mode 0644 (Chromium reads it
-/// as the user), creating missing parent directories with mode 0700.
-/// @throws std::system_error on any filesystem failure.
-void writePacFile(const std::filesystem::path& pac_file, std::string_view pac);
 
 }  // namespace llmfw

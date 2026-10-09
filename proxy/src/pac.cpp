@@ -1,6 +1,5 @@
 #include "llmfw/pac.hpp"
 
-#include "llmfw/fs_util.hpp"
 #include "llmfw/pac_template.hpp"
 
 namespace llmfw {
@@ -8,7 +7,6 @@ namespace llmfw {
 namespace {
 
 constexpr std::string_view kPortToken = "{{PROXY_PORT}}";
-constexpr mode_t kPacMode = 0644;
 
 }  // namespace
 
@@ -32,11 +30,6 @@ std::string renderPac(std::string_view template_text, std::uint16_t proxy_port) 
     throw TemplateError("PAC template has an unreplaced token: " + token);
   }
   return pac;
-}
-
-void writePacFile(const std::filesystem::path& pac_file, std::string_view pac) {
-  createPrivateDirectories(pac_file.parent_path());
-  writeFileAtomically(pac_file, pac, kPacMode);
 }
 
 }  // namespace llmfw
