@@ -11,7 +11,7 @@ InstallPaths InstallPaths::forCurrentUser() {
   p.home = homeDirectory();
   p.app_support = p.home / "Library" / "Application Support" / "llm-firewall";
   p.config_file = p.app_support / "llm-firewall.yaml";
-  p.pac_file = p.app_support / "claude.pac";
+  p.profile_file = p.app_support / "llm-firewall-claude-proxy.mobileconfig";
   p.certs_dir = p.app_support / "certs";
   p.ca_cert = p.certs_dir / "ca.pem";
   p.leaf_cert = p.certs_dir / "leaf.pem";
@@ -25,8 +25,6 @@ InstallPaths InstallPaths::forCurrentUser() {
   p.launch_agents_dir = p.home / "Library" / "LaunchAgents";
   p.proxy_plist = p.launch_agents_dir / (std::string(kProxyAgentLabel) + ".plist");
   p.collector_plist = p.launch_agents_dir / (std::string(kCollectorAgentLabel) + ".plist");
-  p.launcher_app = p.home / "Applications" / "Claude (Monitored).app";
-  p.claude_app = "/Applications/Claude.app";
   return p;
 }
 

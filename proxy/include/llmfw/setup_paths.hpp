@@ -11,7 +11,7 @@ struct InstallPaths {
   std::filesystem::path home;
   std::filesystem::path app_support;        ///< ~/Library/Application Support/llm-firewall      (0700)
   std::filesystem::path config_file;        ///< <app_support>/llm-firewall.yaml                 (0600)
-  std::filesystem::path pac_file;           ///< <app_support>/claude.pac                        (0644)
+  std::filesystem::path profile_file;       ///< <app_support>/llm-firewall-claude-proxy.mobileconfig (0644)
   std::filesystem::path certs_dir;          ///< <app_support>/certs                             (0700)
   std::filesystem::path ca_cert;            ///< <certs_dir>/ca.pem (public cert only)           (0644)
   std::filesystem::path leaf_cert;          ///< <certs_dir>/leaf.pem                            (0644)
@@ -25,8 +25,6 @@ struct InstallPaths {
   std::filesystem::path launch_agents_dir;  ///< ~/Library/LaunchAgents
   std::filesystem::path proxy_plist;        ///< <launch_agents_dir>/dev.llmfirewall.proxy.plist
   std::filesystem::path collector_plist;    ///< <launch_agents_dir>/dev.llmfirewall.collector.plist
-  std::filesystem::path launcher_app;       ///< ~/Applications/Claude (Monitored).app
-  std::filesystem::path claude_app;         ///< /Applications/Claude.app
 
   /// Resolves every path from llmfw::homeDirectory(). Creates nothing.
   /// @throws ConfigError if the home directory cannot be determined.

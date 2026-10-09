@@ -31,12 +31,11 @@ TEST(InstallPaths, ResolvesEverythingUnderHome) {
   EXPECT_EQ(p.home, "/Users/tester");
   EXPECT_EQ(p.app_support, "/Users/tester/Library/Application Support/llm-firewall");
   EXPECT_EQ(p.config_file, "/Users/tester/Library/Application Support/llm-firewall/llm-firewall.yaml");
-  EXPECT_EQ(p.pac_file, "/Users/tester/Library/Application Support/llm-firewall/claude.pac");
+  EXPECT_EQ(p.profile_file,
+            "/Users/tester/Library/Application Support/llm-firewall/llm-firewall-claude-proxy.mobileconfig");
   EXPECT_EQ(p.leaf_key, "/Users/tester/Library/Application Support/llm-firewall/certs/leaf.key");
   EXPECT_EQ(p.logs_dir, "/Users/tester/Library/Logs/llm-firewall");
   EXPECT_EQ(p.proxy_plist, "/Users/tester/Library/LaunchAgents/dev.llmfirewall.proxy.plist");
-  EXPECT_EQ(p.launcher_app, "/Users/tester/Applications/Claude (Monitored).app");
-  EXPECT_EQ(p.claude_app, "/Applications/Claude.app");
 }
 
 TEST(InstallPaths, MatchesTheProxyDefaultConfigLocation) {
