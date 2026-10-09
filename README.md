@@ -83,36 +83,43 @@ depends on them.
   `ignore-certificate-errors`, `host-resolver-rules`, `host-rules`,
   `disable-web-security`, `log-net-log`, `net-log-capture-mode`, `ssl-key-log-file`,
   and several launcher/cmd-prefix switches. So debugging-based and key-log-based
-  capture is impossible. **`--proxy-server` and `--proxy-pac-url` are not on the list.**
-  That they are actually honored is confirmed in phase 0.
+  capture is impossible.
+- **Proxy command-line flags have no effect.** In phase 0, Claude started with
+  `--proxy-pac-url` logged `proxy for https://claude.ai resolved … (direct)` in its
+  `main.log` and connected straight to Anthropic.
+- **Claude has a managed proxy setting, `egressProxyPacUrl`** (Claude Desktop
+  1.44121.1 or later; see Anthropic's
+  [network proxy docs](https://claude.com/docs/third-party/claude-desktop/network-proxy)).
+  It is read once at launch, only from
+  `/Library/Managed Preferences/[<user>/]com.anthropic.claudefordesktop.plist`, which
+  macOS writes when a configuration profile carrying it is installed. A profile that
+  sets only this key changes Claude's proxy and nothing else.
 - **Three traffic paths exist** (next section).
 - **HTTP/3 is not a bypass on desktop.** claude.ai advertises `alt-svc: h3`, but
   Chromium does not use QUIC through an HTTP proxy.
 
 ## The three desktop traffic paths
 
+All three are routed by one setting: `egressProxyPacUrl` points at the PAC that the
+proxy serves (`http://127.0.0.1:18443/proxy.pac`). The PAC sends only Claude and
+Anthropic hosts to the proxy.
+
 | Path | What | How it is routed | How TLS is trusted | Coverage |
 |---|---|---|---|---|
-| **(a) UI** | The claude.ai UI inside Electron/Chromium | `--proxy-pac-url` passed by the launcher. The PAC sends only Claude/Anthropic hosts to the proxy | The local CA in the login Keychain | Expected full (phase 0 confirms the flag) |
-| **(b) Claude Code / agents** | Bundled Node components | `HTTPS_PROXY` (+ `NO_PROXY`) set by the launcher and inherited by child processes | `NODE_EXTRA_CA_CERTS` pointing at the CA certificate (Node also honors `CLAUDE_CODE_CERT_STORE`, which is not needed) | Expected full |
-| **(c) Cowork VM** | The VM gets proxy config from the host, but **falls back to direct if its PAC fetch fails**, and has its own CA trust | Unknown | Unknown | **Unknown until phase 0** |
+| **(a) App** | The claude.ai UI and the app's own requests (Electron/Chromium) | The app fetches the PAC at launch and evaluates it per request | The local CA in the login Keychain | Phase 0 confirms |
+| **(b) Claude Code engine** | The agent behind Chat, Cowork and Code | The app hands it the one proxy the PAC returns for the inference endpoint, as `HTTPS_PROXY`/`HTTP_PROXY` with a loopback `NO_PROXY` | Not settled: the app makes the engine trust the System keychain; `NODE_EXTRA_CA_CERTS` is the documented fallback | Phase 0 confirms |
+| **(c) Cowork VM** | Commands the agent runs in Cowork's sandbox | The VM is given its own copy of the PAC when it starts and evaluates it per request, reaching the host's loopback through an alias | Its own trust store: open question | **Phase 0 checks** |
 
-`HTTPS_PROXY` has no PAC, so path (b) sends **all** its HTTPS traffic to the proxy.
-The proxy therefore also acts as a plain CONNECT tunnel for every host it does not
-decrypt (a "blind tunnel", which is never decrypted).
-
-**Fallback if phase 0 shows `--proxy-pac-url` is ignored:** install the same PAC as the
-system PAC, and have the pipeline keep only desktop traffic by User-Agent
-(Electron/Claude UA). Browsers would then reach the proxy, but they would only ever be
-blind-tunneled or discarded.
+`HTTPS_PROXY` has no per-host rules, so path (b) sends **all** its HTTPS traffic to the
+proxy. The proxy therefore also acts as a plain CONNECT tunnel for every host it does
+not decrypt (a "blind tunnel", which is never decrypted).
 
 ## Life of one message
 
 You type a prompt in Claude.app and press Enter.
 
 ```
- Claude.app (launched by "Claude (Monitored).app")
-   │  --proxy-pac-url=file://…/claude.pac
+ Claude.app   (egressProxyPacUrl = http://127.0.0.1:18443/proxy.pac, fetched at launch)
    │  PAC: https/wss to claude.ai, *.claude.ai, anthropic.com, *.anthropic.com
    │       → "PROXY 127.0.0.1:18443; DIRECT"      (everything else → DIRECT)
    ▼
@@ -146,9 +153,10 @@ You type a prompt in Claude.app and press Enter.
 
 Step by step:
 
-1. **Routing.** Chromium asks the PAC where `https://claude.ai/api/…/completion` should
-   go. The answer is the local proxy, with `DIRECT` as fallback.
-2. **CONNECT.** Chromium sends `CONNECT claude.ai:443`. The host is in scope, so the
+1. **Routing.** Claude fetched the PAC from the proxy when it started. Its network
+   stack asks the PAC where `https://claude.ai/api/…/completion` should go. The answer
+   is the local proxy, with `DIRECT` as fallback.
+2. **CONNECT.** Claude sends `CONNECT claude.ai:443`. The host is in scope, so the
    proxy first opens its own TLS connection to the real claude.ai and verifies it
    strictly. Only then does it reply `200`.
 3. **TLS termination.** The proxy completes TLS with Chromium using the leaf
@@ -258,7 +266,8 @@ therefore cannot hang the collector.
 
 | If this fails… | Claude | Logging |
 |---|---|---|
-| Proxy not running | UI works (PAC `; DIRECT`). The Node path (b) has no DIRECT fallback, so its HTTPS requests fail until launchd restarts the proxy (seconds) | Lost while it is down |
+| Proxy not running when Claude starts | Works: the PAC cannot be fetched, so Claude connects directly for that whole session | Lost for that session (restart Claude once the proxy is up) |
+| Proxy stops while Claude runs | The app works (PAC `; DIRECT`). The engine (b) has no DIRECT fallback, so its requests fail until launchd restarts the proxy (seconds) | Lost while it is down |
 | Upstream certificate fails strict verification | Works (the connection is blind-tunneled, and Claude verifies for itself) | That connection is not decrypted (counted) |
 | Claude rejects our certificate (e.g. CA removed) | One failed connection, then the host is tunneled for 10 min | Not decrypted (counted) |
 | Proxy cannot parse HTTP framing | Works (switches to a raw byte relay) | That connection is not captured (counted) |
@@ -320,22 +329,20 @@ The full list is in `collector/.../coverage/CoverageMetric.java`.
    nothing if any check fails.
 2. **Creates directories** (0700): `~/Library/Application Support/llm-firewall/`
    (with `certs/`, `run/`, `models/` and `bin/` inside) and `~/Library/Logs/llm-firewall/`.
-3. **Writes** `llm-firewall.yaml` (from `config/`, and never overwrites your edits)
-   and `claude.pac` (with the port filled in).
+3. **Writes** `llm-firewall.yaml` (from `config/`, and never overwrites your edits).
 4. **Certificates:** generates the CA, issues the leaf, writes the leaf key (0600),
    destroys the CA key, writes the CA certificate, and **adds the CA to your login
    Keychain as trusted** (macOS asks you to confirm).
-5. **Installs a launcher**, `~/Applications/Claude (Monitored).app`. It quits Claude if
-   it is running, then starts Claude.app with `--proxy-pac-url=file://…/claude.pac` and
-   the environment `HTTPS_PROXY=http://127.0.0.1:18443`,
-   `NO_PROXY=localhost,127.0.0.1,::1` and `NODE_EXTRA_CA_CERTS=…/certs/ca.pem`.
-   **Always open Claude with this launcher.**
+5. **Writes the Claude profile**, a `.mobileconfig` that sets only
+   `egressProxyPacUrl` (what `llmfw-setup profile` does today), and opens it. **You
+   approve it** in System Settings > General > Device Management, then restart Claude.
 6. **Installs two LaunchAgents**, `~/Library/LaunchAgents/dev.llmfirewall.proxy.plist`
    and `dev.llmfirewall.collector.plist`, and loads them (`launchctl bootstrap gui/<uid>`).
 7. **Writes `install-manifest.json`**, a list of everything above, which uninstall uses.
 
-It does **not** change system proxy settings, browser settings, any other app, the
-system keychain, or anything that needs `sudo`. Models (`*.onnx`) are placed in
+It does **not** change system proxy settings, browser settings, any other app's
+settings, the system keychain, or anything that needs `sudo`. The only setting of
+Claude's it changes is `egressProxyPacUrl`, through the profile you approve. Models (`*.onnx`) are placed in
 `models/` separately.
 
 ## Uninstall
@@ -343,12 +350,13 @@ system keychain, or anything that needs `sudo`. Models (`*.onnx`) are placed in
 `llmfw-setup uninstall` reverses exactly what the manifest lists:
 
 1. It unloads and deletes both LaunchAgents.
-2. It removes the launcher app.
+2. It removes the Claude profile (`dev.llmfirewall.claude-egress-proxy`), or tells you
+   to remove it in System Settings > General > Device Management.
 3. It **removes the CA's trust setting and the certificate from the Keychain**.
 4. It deletes the certificates, the PAC, the socket directory and the manifest.
 
-`--purge` also deletes the database, logs, models and config. After uninstall, open
-Claude.app normally. It was never modified.
+`--purge` also deletes the database, logs, models and config. After uninstall,
+restart Claude. Claude.app itself was never modified.
 
 ## Known limits
 
@@ -359,11 +367,16 @@ These cannot be fixed by design:
   back, llm-firewall cannot see it. It sees only what is present in the SSE stream.
 - **Projects knowledge and memory after upload.** Files are scanned when uploaded.
   Their later server-side use in other conversations is invisible.
-- **The Cowork VM** (path c): coverage is unknown until phase 0. Its PAC fallback is
-  direct, and it has its own CA trust.
+- **The Cowork VM** (path c): phase 0 checks that its copy of the PAC reaches the
+  proxy. If the VM cannot download the PAC when it starts, it connects directly until
+  it next starts, and it has its own CA trust.
 - **The Claude in Chrome extension:** this is browser traffic and out of scope.
-- **Launching Claude without the launcher** (Dock, Spotlight, login item) bypasses
-  llm-firewall entirely, and this cannot be detected from the proxy.
+- **Claude starting before the proxy.** Claude fetches the PAC only at launch, so a
+  session started while the proxy is down is not routed at all. The proxy cannot see
+  this; Claude's `main.log` shows it.
+- **Organization-managed Macs.** Claude reads the proxy keys as a group from one
+  managed source. If your organization's profile already sets any of them (or the
+  update keys), this profile may be ignored or conflict with it.
 - **Format drift.** claude.ai's formats are undocumented. Adapters will break when
   formats change. Text is then still scanned as `UNKNOWN` and the drift is counted,
   but source labels become less precise until the adapter is updated.
@@ -373,8 +386,9 @@ These cannot be fixed by design:
 
 - **Phase 0: validate the routing.** The proxy runs in `metadata_only` mode and
   writes the JSONL metadata log. It checks:
-  - that `--proxy-pac-url` is honored and a `file://` PAC works
-  - whether Cowork VM traffic appears
+  - that Claude applies `egressProxyPacUrl` (its `main.log` shows
+    `[egress-proxy] pinned to PAC script` and `proxy for https://claude.ai resolved … (proxied)`)
+  - whether the Claude Code engine and Cowork VM traffic reach the proxy
   - the endpoint map and the field map (collector `--schema-survey`, which records key
     paths and types but never values)
   - how server-side tool results appear in SSE
@@ -397,35 +411,25 @@ llm-firewall/
   .gitignore
   config/
     llm-firewall.yaml       example config (ports, socket, scope, caps, queue, retention, allowlist, custom PII)
-    claude.pac              PAC template ({{PROXY_PORT}})
+    claude.pac              PAC template the proxy fills in and serves at /proxy.pac
   proto/
     capture.proto           proxy→collector wire contract + framing rules
-  proxy/                    C++20 / CMake: data plane + setup CLI
-    CMakeLists.txt          targets: llmfw-proxy, llmfw-setup, llmfw-tests, fuzz_* ; deps via vcpkg.json
-    vcpkg.json
-    include/llmfw/          headers (config, scope, TLS, CONNECT, HTTP/1.1, WebSocket, tee, queue, sinks, setup_*)
-    src/                    stub implementations + proxy_main.cpp, setup_main.cpp
-    tests/                  GoogleTest shells (GTEST_SKIP)
-    fuzz/                   libFuzzer entry shells (HTTP/1.1 request/response, WebSocket, CONNECT)
-  collector/                Java 21 / Gradle (Kotlin DSL): analysis
-    settings.gradle.kts, build.gradle.kts
-    src/main/java/dev/llmfirewall/collector/
-      CollectorMain, Pipeline
-      config/ ingest/ parse/ label/ label/adapters/ event/
-      detect/ detect/pii/ detect/injection/ detect/exfil/
-      mask/ store/ coverage/
-    src/main/resources/.../store/schema.sql
-    src/test/java/...       JUnit 5 shells (@Disabled)
-  launchd/
-    dev.llmfirewall.proxy.plist, dev.llmfirewall.collector.plist   LaunchAgent templates
+  proxy/                    C++20 / CMake: the proxy (llmfw-proxy) and the setup CLI (llmfw-setup)
+    CMakeLists.txt, vcpkg.json
+    cmake/                  pac_template.hpp.in (embeds config/claude.pac)
+    include/llmfw/, src/    implementation
+    tests/                  GoogleTest unit and integration tests
 ```
+
+The collector (Java 21), TLS decryption and the LaunchAgent templates are added to the
+repository when they are built.
 
 ## Build and test
 
 The proxy in `proxy/` builds and runs in `metadata_only` mode: it blind-tunnels every
 CONNECT (nothing is decrypted yet) and logs one metadata record per tunnel.
-`llmfw-setup launch` starts Claude routed through it. Installing (certificates,
-Keychain trust, LaunchAgents) and the collector are not built yet.
+`llmfw-setup profile` writes the configuration profile that points Claude at it.
+Installing (certificates, Keychain trust, LaunchAgents) and the collector are not built yet.
 
 Prerequisites (macOS, Apple Clang 15 or newer, C++20):
 
@@ -475,23 +479,27 @@ line or configuration, 3 the metadata log cannot be opened, 4 the port cannot be
 
 ### Phase 0: route Claude through the proxy
 
-This checks that Claude.app honors `--proxy-pac-url`, and which hosts it connects to.
+This checks that Claude applies `egressProxyPacUrl`, and which hosts each traffic path
+connects to. It needs Claude Desktop 1.44121.1 or later.
 
-1. Start the proxy in one terminal and leave it running:
+1. Write the profile:
+   `proxy/build/llmfw-setup profile --config config/llm-firewall.yaml`.
+   It goes to `~/Library/Application Support/llm-firewall/llm-firewall-claude-proxy.mobileconfig`
+   and sets only `egressProxyPacUrl = http://127.0.0.1:18443/proxy.pac`.
+2. Install it: `open` the file, then approve it in System Settings > General > Device
+   Management. Check that `/Library/Managed Preferences/$USER/com.anthropic.claudefordesktop.plist`
+   now exists.
+3. Start the proxy and leave it running:
    `proxy/build/llmfw-proxy --config config/llm-firewall.yaml`
-2. Quit Claude (Cmd-Q). The launcher refuses while Claude is running, because a
-   running instance ignores new launch flags.
-3. In another terminal: `proxy/build/llmfw-setup launch --config config/llm-firewall.yaml`.
-   This writes the PAC for the configured port to
-   `~/Library/Application Support/llm-firewall/claude.pac` and starts Claude with
-   `--proxy-pac-url` pointing at it.
-4. Use Claude. The proxy's stderr should show lines such as
-   `tunnel open conn=… host=claude.ai:443 reason=scoped_no_cert`.
-5. Quit Claude, then stop the proxy (Ctrl-C). The metadata log has one record per tunnel.
+4. Quit Claude (Cmd-Q) and start it normally. Claude reads the setting at launch.
+5. Check that it took effect:
+   - the proxy's stderr shows `served PAC conn=…`, then `tunnel open … host=claude.ai:443 reason=scoped_no_cert`;
+   - `grep -E "egress-proxy|proxy for https://claude.ai" ~/Library/Logs/Claude/main.log`
+     shows `pinned to PAC script` and `(proxied)`.
+6. Start a Chat, a Code session and a Cowork task. The engine's and the VM's
+   connections appear as further tunnels; `~/Library/Logs/Claude/cowork_vm_node.log`
+   shows `[VM:start] guest egress pinned to PAC script`.
+7. Quit Claude, then stop the proxy (Ctrl-C). The metadata log has one record per tunnel.
 
-If no `tunnel open` lines appear, Chromium did not load the `file://` PAC. Quit
-Claude and launch again with `--pac-data-url`, which passes the PAC inline instead.
-
-Only the claude.ai interface is routed. The bundled Claude Code components and the
-Cowork VM are not, and launching Claude any other way bypasses llm-firewall; in every
-case Claude keeps working.
+To stop routing Claude through the proxy, remove the profile in System Settings >
+General > Device Management and restart Claude.
