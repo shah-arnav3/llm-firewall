@@ -52,13 +52,16 @@ scope:
 
 # Rules that assign a client path from the User-Agent. The first match wins, and no
 # match means UNKNOWN. Web browser support is added later by adding a rule here
-# (e.g. path: WEB), without code changes. Phase 0 must confirm these substrings.
+# (e.g. path: WEB), without code changes.
 clients:
+  # Unconfirmed. The engine sends no User-Agent on CONNECT, so this cannot match a
+  # blind tunnel; its User-Agent is only visible inside TLS.
   - path: CLAUDE_CODE
     user_agent_contains: ["claude-cli/", "claude-code/"]
+  # Confirmed: the app's CONNECT User-Agent contains both.
   - path: UI
     user_agent_contains: ["Electron/", "Claude/"]
-  # - path: VM            # Filled in after phase 0 identifies the Cowork VM UA.
+  # - path: VM            # Unknown until the Cowork VM's traffic is observed.
   #   user_agent_contains: []
 
 certs:

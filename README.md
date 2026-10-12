@@ -72,8 +72,8 @@ The proxy, pipeline and store are client-agnostic already.
 
 ## Verified facts about Claude.app
 
-These were checked against Claude.app **v2.9939.4** (Electron, Chrome 152). The design
-depends on them.
+These were checked against Claude.app **v2.9939.4** and **v2.31226.1** (Electron,
+Chrome 152). The design depends on them.
 
 - **Main UI traffic uses Chromium's network stack and resolves the proxy**
   (`resolveProxy`). The only `setCertificateVerifyProc` pin in the app is on a
@@ -94,6 +94,16 @@ depends on them.
   `/Library/Managed Preferences/[<user>/]com.anthropic.claudefordesktop.plist`, which
   macOS writes when a configuration profile carrying it is installed. A profile that
   sets only this key changes Claude's proxy and nothing else.
+- **`egressProxyPacUrl` routes the app and the engine.** A user-scoped profile from `llmfw-setup profile` is enough: macOS writes
+  `/Library/Managed Preferences/<user>/com.anthropic.claudefordesktop.plist`, and
+  `main.log` shows `[egress-proxy] pinned to PAC script at 127.0.0.1:18443` and
+  `Resolved system proxy for Code sessions: http://127.0.0.1:18443`. No Claude
+  connection bypasses the proxy. The line `[bootPreconnect] proxy for https://claude.ai
+  resolved … (direct)` still appears when routing works, so it is not a signal.
+- **Only the app's CONNECT requests carry a User-Agent**
+  (`… Claude/<version> Chrome/<version> Electron/<version> …`). The engine's CONNECT
+  requests carry none, so a blind tunnel cannot tell the engine from any other client
+  without a User-Agent; the engine's own User-Agent is inside TLS.
 - **Three traffic paths exist** (next section).
 - **HTTP/3 is not a bypass on desktop.** claude.ai advertises `alt-svc: h3`, but
   Chromium does not use QUIC through an HTTP proxy.
@@ -106,13 +116,14 @@ Anthropic hosts to the proxy.
 
 | Path | What | How it is routed | How TLS is trusted | Coverage |
 |---|---|---|---|---|
-| **(a) App** | The claude.ai UI and the app's own requests (Electron/Chromium) | The app fetches the PAC at launch and evaluates it per request | The local CA in the login Keychain | Phase 0 confirms |
-| **(b) Claude Code engine** | The agent behind Chat, Cowork and Code | The app hands it the one proxy the PAC returns for the inference endpoint, as `HTTPS_PROXY`/`HTTP_PROXY` with a loopback `NO_PROXY` | Not settled: the app makes the engine trust the System keychain; `NODE_EXTRA_CA_CERTS` is the documented fallback | Phase 0 confirms |
-| **(c) Cowork VM** | Commands the agent runs in Cowork's sandbox | The VM is given its own copy of the PAC when it starts and evaluates it per request, reaching the host's loopback through an alias | Its own trust store: open question | **Phase 0 checks** |
+| **(a) App** | The claude.ai UI and the app's own requests (Electron/Chromium) | The app fetches the PAC at launch and evaluates it per request | The local CA in the login Keychain | Confirmed: `claude.ai`, `api.anthropic.com`, `assets-proxy.anthropic.com`, `s-cdn.anthropic.com` |
+| **(b) Claude Code engine** | The agent behind Chat, Cowork and Code | The app hands it the one proxy the PAC returns for the inference endpoint, as `HTTPS_PROXY`/`HTTP_PROXY` with a loopback `NO_PROXY` | Not settled: the app makes the engine trust the System keychain; `NODE_EXTRA_CA_CERTS` is the documented fallback | Confirmed for Code sessions: `api.anthropic.com`, plus Datadog telemetry |
+| **(c) Cowork VM** | Commands the agent runs in Cowork's sandbox | The VM is given its own copy of the PAC when it starts and evaluates it per request, reaching the host's loopback through an alias | Its own trust store: open question | **Not verified**: needs an account with Cowork |
 
 `HTTPS_PROXY` has no per-host rules, so path (b) sends **all** its HTTPS traffic to the
 proxy. The proxy therefore also acts as a plain CONNECT tunnel for every host it does
-not decrypt (a "blind tunnel", which is never decrypted).
+not decrypt (a "blind tunnel", which is never decrypted), such as the engine's
+telemetry to `http-intake.logs.us5.datadoghq.com`.
 
 ## Life of one message
 
@@ -367,8 +378,8 @@ These cannot be fixed by design:
   back, llm-firewall cannot see it. It sees only what is present in the SSE stream.
 - **Projects knowledge and memory after upload.** Files are scanned when uploaded.
   Their later server-side use in other conversations is invisible.
-- **The Cowork VM** (path c): phase 0 checks that its copy of the PAC reaches the
-  proxy. If the VM cannot download the PAC when it starts, it connects directly until
+- **The Cowork VM** (path c): whether its copy of the PAC reaches the proxy is not yet
+  verified. If the VM cannot download the PAC when it starts, it connects directly until
   it next starts, and it has its own CA trust.
 - **The Claude in Chrome extension:** this is browser traffic and out of scope.
 - **Claude starting before the proxy.** Claude fetches the PAC only at launch, so a
@@ -387,7 +398,7 @@ These cannot be fixed by design:
 - **Phase 0: validate the routing.** The proxy runs in `metadata_only` mode and
   writes the JSONL metadata log. It checks:
   - that Claude applies `egressProxyPacUrl` (its `main.log` shows
-    `[egress-proxy] pinned to PAC script` and `proxy for https://claude.ai resolved … (proxied)`)
+    `[egress-proxy] pinned to PAC script`)
   - whether the Claude Code engine and Cowork VM traffic reach the proxy
   - the endpoint map and the field map (collector `--schema-survey`, which records key
     paths and types but never values)
@@ -494,8 +505,8 @@ connects to. It needs Claude Desktop 1.44121.1 or later.
 4. Quit Claude (Cmd-Q) and start it normally. Claude reads the setting at launch.
 5. Check that it took effect:
    - the proxy's stderr shows `served PAC conn=…`, then `tunnel open … host=claude.ai:443 reason=scoped_no_cert`;
-   - `grep -E "egress-proxy|proxy for https://claude.ai" ~/Library/Logs/Claude/main.log`
-     shows `pinned to PAC script` and `(proxied)`.
+   - `grep -E "egress-proxy|system proxy for Code" ~/Library/Logs/Claude/main.log`
+     shows `pinned to PAC script` and `Resolved system proxy for Code sessions: http://127.0.0.1:18443`.
 6. Start a Chat, a Code session and a Cowork task. The engine's and the VM's
    connections appear as further tunnels; `~/Library/Logs/Claude/cowork_vm_node.log`
    shows `[VM:start] guest egress pinned to PAC script`.
