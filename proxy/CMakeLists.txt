@@ -15,6 +15,7 @@ option(LLMFW_SANITIZE    "Build with AddressSanitizer + UndefinedBehaviorSanitiz
 
 # Dependencies come from Homebrew (see README). vcpkg.json lists the same packages for a vcpkg build.
 find_package(Boost 1.83 REQUIRED CONFIG COMPONENTS headers)  # Asio is header-only
+find_package(OpenSSL 3.0 REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
 
@@ -22,7 +23,10 @@ add_library(llmfw_flags INTERFACE)
 target_compile_options(llmfw_flags INTERFACE
   -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wnon-virtual-dtor
   $<$<CONFIG:Release>:-O2>)
-target_compile_definitions(llmfw_flags INTERFACE BOOST_ASIO_NO_DEPRECATED)
+target_compile_definitions(llmfw_flags INTERFACE
+  BOOST_ASIO_NO_DEPRECATED
+  OPENSSL_API_COMPAT=30000
+  OPENSSL_NO_DEPRECATED)
 
 if (LLMFW_SANITIZE)
   target_compile_options(llmfw_flags INTERFACE
@@ -67,6 +71,7 @@ add_library(llmfw_core STATIC
   src/listener.cpp
   src/log.cpp
   src/metadata_logger.cpp
+  src/openssl_ptr.cpp
   src/pac.cpp
   src/proxy_context.cpp
   src/random_id.cpp)
@@ -74,7 +79,7 @@ target_include_directories(llmfw_core
   PUBLIC  include
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen-pac)
 target_link_libraries(llmfw_core
-  PUBLIC  llmfw_flags llmfw_proto Boost::headers
+  PUBLIC  llmfw_flags llmfw_proto Boost::headers OpenSSL::Crypto
   PRIVATE yaml-cpp::yaml-cpp)
 
 add_executable(llmfw-proxy src/proxy_main.cpp)
@@ -107,6 +112,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_counters.cpp
     tests/test_host_scope.cpp
     tests/test_metadata_logger.cpp
+    tests/test_openssl_ptr.cpp
     tests/test_proxy_app.cpp
     tests/test_random_id.cpp
     tests/test_pac.cpp
