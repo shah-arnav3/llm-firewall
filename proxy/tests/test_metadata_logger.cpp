@@ -166,6 +166,20 @@ TEST(MetadataLogger, WritesOneJsonObjectPerLine) {
   }
 }
 
+TEST(MetadataLogger, WritesUnknownClientPath) {
+  const TempDir tmp;
+  const fs::path path = tmp.path() / "metadata.jsonl";
+  llmfw::v1::Capture capture = tunnelCapture(1);
+  capture.mutable_client()->set_path(llmfw::v1::CLIENT_PATH_UNKNOWN);
+  {
+    MetadataLogger logger(logConfig(path), "inst");
+    ASSERT_TRUE(logger.write(frameOf(capture)));
+  }
+  const std::vector<std::string> lines = readLines(path);
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_NE(lines[0].find("\"client_path\":\"CLIENT_PATH_UNKNOWN\""), std::string::npos) << lines[0];
+}
+
 TEST(MetadataLogger, SkipsNonCaptureFrames) {
   const TempDir tmp;
   const fs::path path = tmp.path() / "metadata.jsonl";

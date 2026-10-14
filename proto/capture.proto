@@ -239,7 +239,8 @@ message MetadataRecord {
   uint64 connection_id = 3;
   uint32 exchange_index = 4;
   string kind = 5;                  // "http" | "websocket" | "tunnel"
-  ClientPath client_path = 6;
+  // Explicit presence, so the JSON line names the path even when it is UNKNOWN.
+  optional ClientPath client_path = 6;
   string user_agent = 7;
   string host = 8;
   string method = 9;
