@@ -89,6 +89,7 @@ target_compile_definitions(llmfw-proxy PRIVATE LLMFW_VERSION="${PROJECT_VERSION}
 # Setup library
 add_library(llmfw_setup_core STATIC
   src/setup_ca.cpp
+  src/setup_leaf.cpp
   src/setup_paths.cpp
   src/setup_profile.cpp
   src/setup_x509.cpp)
@@ -119,6 +120,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_random_id.cpp
     tests/test_pac.cpp
     tests/test_setup_ca.cpp
+    tests/test_setup_leaf.cpp
     tests/test_setup_paths.cpp
     tests/test_setup_profile.cpp
     tests/test_tunnel_registry.cpp)
