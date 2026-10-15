@@ -1,7 +1,8 @@
 #pragma once
-// RAII owners for OpenSSL objects used by both the proxy and the setup CLI.
+// RAII owners for OpenSSL objects, and error reporting, shared by the proxy and the setup CLI.
 
 #include <memory>
+#include <string_view>
 
 #include <openssl/types.h>
 
@@ -19,5 +20,10 @@ struct OpenSslDeleter {
 using X509Ptr = std::unique_ptr<X509, OpenSslDeleter>;
 using EvpPkeyPtr = std::unique_ptr<EVP_PKEY, OpenSslDeleter>;
 using BioPtr = std::unique_ptr<BIO, OpenSslDeleter>;
+
+/// Throws std::runtime_error("<context>: <reason>"), where the reason is the oldest
+/// error on this thread's OpenSSL error queue (or "unknown OpenSSL error" if it is
+/// empty). The queue is cleared, so the next failure does not report a stale error.
+[[noreturn]] void throwOpenSslError(std::string_view context);
 
 }  // namespace llmfw

@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+#include <string>
+
 #include <openssl/bio.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
@@ -41,6 +45,33 @@ TEST(OpenSslPtr, NullIsANoOp) {
   deleter(static_cast<X509*>(nullptr));
   deleter(static_cast<EVP_PKEY*>(nullptr));
   deleter(static_cast<BIO*>(nullptr));
+}
+
+TEST(OpenSslError, ReportsContextAndOldestErrorThenClearsQueue) {
+  ERR_clear_error();
+  ASSERT_EQ(BIO_new_file("/nonexistent/llmfw-test", "r"), nullptr);
+  try {
+    throwOpenSslError("open test file");
+    FAIL() << "expected a throw";
+  } catch (const std::runtime_error& e) {
+    const std::string what = e.what();
+    EXPECT_EQ(what.rfind("open test file: error:", 0), 0u) << what;
+  }
+  EXPECT_EQ(ERR_peek_error(), 0u);
+}
+
+TEST(OpenSslError, ReportsUnknownWhenQueueIsEmpty) {
+  ERR_clear_error();
+  EXPECT_THROW(
+      {
+        try {
+          throwOpenSslError("ctx");
+        } catch (const std::runtime_error& e) {
+          EXPECT_STREQ(e.what(), "ctx: unknown OpenSSL error");
+          throw;
+        }
+      },
+      std::runtime_error);
 }
 
 }  // namespace
