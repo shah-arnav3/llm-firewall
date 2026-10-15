@@ -90,7 +90,8 @@ target_compile_definitions(llmfw-proxy PRIVATE LLMFW_VERSION="${PROJECT_VERSION}
 add_library(llmfw_setup_core STATIC
   src/setup_ca.cpp
   src/setup_paths.cpp
-  src/setup_profile.cpp)
+  src/setup_profile.cpp
+  src/setup_x509.cpp)
 target_include_directories(llmfw_setup_core PUBLIC include)
 target_link_libraries(llmfw_setup_core PUBLIC llmfw_core)
 

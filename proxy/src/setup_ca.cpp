@@ -3,14 +3,13 @@
 #include <array>
 #include <stdexcept>
 
-#include <openssl/bn.h>
 #include <openssl/ec.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
-#include <openssl/rand.h>
 #include <openssl/x509v3.h>
 
 #include "llmfw/host_scope.hpp"
+#include "llmfw/setup_x509.hpp"
 
 namespace llmfw::setup {
 
@@ -32,33 +31,6 @@ void validate(const CaSpec& spec) {
   }
   if (spec.validity.count() <= 0) {
     throw std::invalid_argument("CA validity must be positive");
-  }
-}
-
-void setRandomSerial(X509& cert) {
-  std::array<unsigned char, 16> bytes{};
-  if (RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1) {
-    throwOpenSslError("generate CA serial");
-  }
-  // Clearing the top bit keeps the serial positive; setting a low bit keeps it non-zero.
-  bytes[0] = static_cast<unsigned char>((bytes[0] & 0x7f) | 0x01);
-  BIGNUM* bn = BN_bin2bn(bytes.data(), static_cast<int>(bytes.size()), nullptr);
-  const bool ok = bn != nullptr && BN_to_ASN1_INTEGER(bn, X509_get_serialNumber(&cert)) != nullptr;
-  BN_free(bn);
-  if (!ok) {
-    throwOpenSslError("set CA serial");
-  }
-}
-
-void addExtension(X509& cert, X509V3_CTX& ctx, int nid, const std::string& value) {
-  X509_EXTENSION* ext = X509V3_EXT_nconf_nid(nullptr, &ctx, nid, value.c_str());
-  if (ext == nullptr) {
-    throwOpenSslError("build CA extension " + std::string(OBJ_nid2sn(nid)));
-  }
-  const int added = X509_add_ext(&cert, ext, -1);
-  X509_EXTENSION_free(ext);
-  if (added != 1) {
-    throwOpenSslError("add CA extension");
   }
 }
 
@@ -91,10 +63,7 @@ EphemeralCa generateConstrainedCa(const CaSpec& spec) {
     throwOpenSslError("set CA version");
   }
   setRandomSerial(cert);
-  if (X509_gmtime_adj(X509_getm_notBefore(&cert), 0) == nullptr ||
-      X509_time_adj_ex(X509_getm_notAfter(&cert), static_cast<int>(spec.validity.count()), 0, nullptr) == nullptr) {
-    throwOpenSslError("set CA validity");
-  }
+  setValidity(cert, spec.validity);
 
   X509_NAME* subject = X509_get_subject_name(&cert);
   if (X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_UTF8,
@@ -106,14 +75,11 @@ EphemeralCa generateConstrainedCa(const CaSpec& spec) {
     throwOpenSslError("set CA public key");
   }
 
-  X509V3_CTX ctx;
-  X509V3_set_ctx_nodb(&ctx);
-  X509V3_set_ctx(&ctx, &cert, &cert, nullptr, nullptr, 0);
-  addExtension(cert, ctx, NID_basic_constraints, "critical,CA:TRUE,pathlen:0");
-  addExtension(cert, ctx, NID_key_usage, "critical,keyCertSign,cRLSign");
-  addExtension(cert, ctx, NID_subject_key_identifier, "hash");
-  addExtension(cert, ctx, NID_authority_key_identifier, "keyid:always");
-  addExtension(cert, ctx, NID_name_constraints, nameConstraintsValue(spec.permitted_dns));
+  addExtension(cert, cert, NID_basic_constraints, "critical,CA:TRUE,pathlen:0");
+  addExtension(cert, cert, NID_key_usage, "critical,keyCertSign,cRLSign");
+  addExtension(cert, cert, NID_subject_key_identifier, "hash");
+  addExtension(cert, cert, NID_authority_key_identifier, "keyid:always");
+  addExtension(cert, cert, NID_name_constraints, nameConstraintsValue(spec.permitted_dns));
 
   if (X509_sign(&cert, ca.key.get(), EVP_sha256()) <= 0) {
     throwOpenSslError("sign CA certificate");
