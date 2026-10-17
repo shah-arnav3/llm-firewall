@@ -168,4 +168,35 @@ if (LLMFW_BUILD_TESTS)
   add_test(NAME llmfw-setup.profile-bad-scope
     COMMAND llmfw-setup profile --config ${LLMFW_REPO_CONFIG} --output ${LLMFW_FAKE_PROFILE} --scope everyone)
   set_tests_properties(llmfw-setup.profile-bad-scope PROPERTIES WILL_FAIL TRUE)
+
+  # llmfw-setup certs in the throwaway HOME: start from no certificates, create them,
+  # then check the files and that a second run without --force refuses.
+  set(LLMFW_FAKE_CERTS "${LLMFW_FAKE_HOME}/Library/Application Support/llm-firewall/certs")
+  add_test(NAME llmfw-setup.certs-clean COMMAND ${CMAKE_COMMAND} -E rm -rf ${LLMFW_FAKE_CERTS})
+  set_tests_properties(llmfw-setup.certs-clean PROPERTIES FIXTURES_SETUP no-certs)
+  add_test(NAME llmfw-setup.certs COMMAND llmfw-setup certs --config ${LLMFW_REPO_CONFIG})
+  set_tests_properties(llmfw-setup.certs PROPERTIES
+    ENVIRONMENT "HOME=${LLMFW_FAKE_HOME}"
+    PASS_REGULAR_EXPRESSION "SHA-256 fingerprint: [0-9a-f]+"
+    FIXTURES_REQUIRED no-certs
+    FIXTURES_SETUP written-certs)
+  add_test(NAME llmfw-setup.certs-refuses-existing COMMAND llmfw-setup certs --config ${LLMFW_REPO_CONFIG})
+  set_tests_properties(llmfw-setup.certs-refuses-existing PROPERTIES
+    ENVIRONMENT "HOME=${LLMFW_FAKE_HOME}"
+    WILL_FAIL TRUE
+    FIXTURES_REQUIRED written-certs)
+  # macOS's own SSL policy, with the new CA as the only root. Nothing is trusted in the Keychain.
+  add_test(NAME llmfw-setup.certs-verify
+    COMMAND /usr/bin/security verify-cert -q -c ${LLMFW_FAKE_CERTS}/leaf.pem -r ${LLMFW_FAKE_CERTS}/ca.pem
+            -p ssl -s api.anthropic.com)
+  add_test(NAME llmfw-setup.certs-key-mode COMMAND /usr/bin/stat -f %Lp ${LLMFW_FAKE_CERTS}/leaf.key)
+  set_tests_properties(llmfw-setup.certs-key-mode PROPERTIES PASS_REGULAR_EXPRESSION "^600")
+  set_tests_properties(llmfw-setup.certs-verify llmfw-setup.certs-key-mode PROPERTIES FIXTURES_REQUIRED written-certs)
+  # Replacing the files while the checks above read them would race, so this runs last.
+  add_test(NAME llmfw-setup.certs-force COMMAND llmfw-setup certs --config ${LLMFW_REPO_CONFIG} --force)
+  set_tests_properties(llmfw-setup.certs-force PROPERTIES
+    ENVIRONMENT "HOME=${LLMFW_FAKE_HOME}"
+    PASS_REGULAR_EXPRESSION "SHA-256 fingerprint: [0-9a-f]+"
+    FIXTURES_REQUIRED written-certs
+    DEPENDS "llmfw-setup.certs-refuses-existing;llmfw-setup.certs-verify;llmfw-setup.certs-key-mode")
 endif()

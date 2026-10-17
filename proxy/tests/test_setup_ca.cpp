@@ -175,5 +175,13 @@ TEST(SetupCa, FingerprintIsLowerHexSha256OfDer) {
   EXPECT_EQ(expected.size(), 64u);
 }
 
+TEST(SetupCa, CommonNameNamesTheMachineAndDate) {
+  using namespace std::chrono;
+  const sys_days day = year{2026} / October / 7;
+  EXPECT_EQ(caCommonName("arnavs-mac.local", day), "llm-firewall local CA (arnavs-mac 2026-10-07)");
+  EXPECT_EQ(caCommonName("build-host", day), "llm-firewall local CA (build-host 2026-10-07)");
+  EXPECT_TRUE(caCommonName("h", day).starts_with(kCaCommonNamePrefix));
+}
+
 }  // namespace
 }  // namespace llmfw::setup

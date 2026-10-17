@@ -1,6 +1,7 @@
 #include "llmfw/setup_ca.hpp"
 
 #include <array>
+#include <cstdio>
 #include <stdexcept>
 
 #include <openssl/ec.h>
@@ -85,6 +86,17 @@ EphemeralCa generateConstrainedCa(const CaSpec& spec) {
     throwOpenSslError("sign CA certificate");
   }
   return ca;
+}
+
+std::string caCommonName(std::string_view host, std::chrono::sys_days created) {
+  if (host.ends_with(".local")) {
+    host.remove_suffix(std::string_view(".local").size());
+  }
+  const std::chrono::year_month_day ymd{created};
+  char date[16];
+  std::snprintf(date, sizeof date, "%04d-%02u-%02u", static_cast<int>(ymd.year()),
+                static_cast<unsigned>(ymd.month()), static_cast<unsigned>(ymd.day()));
+  return std::string(kCaCommonNamePrefix) + " (" + std::string(host) + " " + date + ")";
 }
 
 void destroyCaKey(EphemeralCa& ca) noexcept { ca.key.reset(); }

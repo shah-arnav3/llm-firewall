@@ -439,8 +439,9 @@ repository when they are built.
 
 The proxy in `proxy/` builds and runs in `metadata_only` mode: it blind-tunnels every
 CONNECT (nothing is decrypted yet) and logs one metadata record per tunnel.
-`llmfw-setup profile` writes the configuration profile that points Claude at it.
-Installing (certificates, Keychain trust, LaunchAgents) and the collector are not built yet.
+`llmfw-setup profile` writes the configuration profile that points Claude at it, and
+`llmfw-setup certs` creates the certificates that decryption will use. Keychain trust,
+installing (LaunchAgents) and the collector are not built yet.
 
 Prerequisites (macOS, Apple Clang 15 or newer, C++20):
 
@@ -487,6 +488,20 @@ curl -x http://127.0.0.1:18443 https://example.com/
 Ctrl-C or SIGTERM shuts it down: open tunnels are closed and still logged, and a
 counter summary is printed. Exit codes: 0 clean, 1 unexpected error, 2 bad command
 line or configuration, 3 the metadata log cannot be opened, 4 the port cannot be bound.
+
+### Creating the certificates
+
+```sh
+proxy/build/llmfw-setup certs --config config/llm-firewall.yaml
+```
+
+This creates the local CA and the leaf certificate described in
+[Certificate model](#certificate-model), in `certs.dir`
+(`~/Library/Application Support/llm-firewall/certs`, mode 0700): `ca.pem` (the CA
+certificate only), `leaf.pem`, and `leaf.key` (mode 0600). The CA key is destroyed
+before the command exits. It prints the CA's SHA-256 fingerprint. It changes nothing in
+the Keychain, so no client trusts the CA yet, and the proxy does not use these files
+yet. If the files exist it refuses (exit 2); `--force` replaces them.
 
 ### Phase 0: route Claude through the proxy
 

@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "llmfw/openssl_ptr.hpp"
@@ -40,6 +41,13 @@ struct EphemeralCa {
 /// Frees the private key (EVP_PKEY_free wipes the key material) and leaves ca.key
 /// null. After this call nothing can sign with this CA again. The certificate is kept.
 void destroyCaKey(EphemeralCa& ca) noexcept;
+
+/// Every llm-firewall CA's common name starts with this, so its Keychain entries can be found.
+inline constexpr std::string_view kCaCommonNamePrefix = "llm-firewall local CA";
+
+/// "llm-firewall local CA (<host> <YYYY-MM-DD>)", where host is the machine name
+/// without a trailing ".local". Distinguishes CAs made on different machines or days.
+[[nodiscard]] std::string caCommonName(std::string_view host, std::chrono::sys_days created);
 
 /// PEM of the certificate only, never the key. Used for <certs>/ca.pem and Keychain import.
 /// @throws std::invalid_argument if ca.cert is null. @throws std::runtime_error on an OpenSSL failure.
