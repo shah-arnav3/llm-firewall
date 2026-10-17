@@ -62,6 +62,7 @@ add_library(llmfw_core STATIC
   src/capture_builder.cpp
   src/capture_queue.cpp
   src/capture_sink.cpp
+  src/cert_store.cpp
   src/client_classifier.cpp
   src/config.cpp
   src/connect_handler.cpp
@@ -108,6 +109,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_capture_builder.cpp
     tests/test_capture_queue.cpp
     tests/test_capture_sink.cpp
+    tests/test_cert_store.cpp
     tests/test_client_connection.cpp
     tests/test_client_classifier.cpp
     tests/test_config.cpp
