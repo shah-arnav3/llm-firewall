@@ -77,12 +77,13 @@ add_library(llmfw_core STATIC
   src/proxy_context.cpp
   src/random_id.cpp
   src/tls_breaker.cpp
+  src/tls_client.cpp
   src/trust_verifier.cpp)
 target_include_directories(llmfw_core
   PUBLIC  include
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen-pac)
 target_link_libraries(llmfw_core
-  PUBLIC  llmfw_flags llmfw_proto Boost::headers OpenSSL::Crypto
+  PUBLIC  llmfw_flags llmfw_proto Boost::headers OpenSSL::SSL OpenSSL::Crypto
           "$<LINK_LIBRARY:FRAMEWORK,Security>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>"
   PRIVATE yaml-cpp::yaml-cpp)
 
@@ -129,6 +130,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_setup_paths.cpp
     tests/test_setup_profile.cpp
     tests/test_tls_breaker.cpp
+    tests/test_tls_client.cpp
     tests/test_trust_verifier.cpp
     tests/test_tunnel_registry.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_setup_core GTest::gtest_main)
