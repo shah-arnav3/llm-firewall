@@ -10,6 +10,7 @@
 #include "llmfw/host_scope.hpp"
 #include "llmfw/log.hpp"
 #include "llmfw/pac.hpp"
+#include "llmfw/tls_breaker.hpp"
 
 namespace llmfw {
 
@@ -19,7 +20,15 @@ constexpr std::string_view kBadRequest =
     "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 constexpr std::string_view kMethodNotAllowed =
     "HTTP/1.1 405 Method Not Allowed\r\nAllow: CONNECT\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+constexpr std::string_view kEstablished = "HTTP/1.1 200 Connection Established\r\n\r\n";
+constexpr std::string_view kBadGateway =
+    "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 constexpr std::size_t kReadChunkBytes = 4096;
+
+std::int64_t nowUnixUs() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
 
 std::string pacResponse(std::string_view pac) {
   return "HTTP/1.1 200 OK\r\nContent-Type: application/x-ns-proxy-autoconfig\r\nContent-Length: " +
@@ -225,13 +234,98 @@ void ClientConnection::onHead(const ProxyRequest& request) {
     return;
   }
   timer_.cancel();
-  const ScopeResult scope = decideScope(request.host, request.port, ctx_.scope);
+  ScopeResult scope = decideScope(request.host, request.port, ctx_.scope, ctx_.certs, ctx_.breaker, Clock::now());
   std::vector<std::uint8_t> leftover(head_buf_.begin() + static_cast<std::ptrdiff_t>(request.head_bytes),
                                      head_buf_.begin() + static_cast<std::ptrdiff_t>(filled_));
   std::string host = scope.normalized_host.empty() ? request.host : scope.normalized_host;
+  if (scope.reason == TunnelReasonTag::kNone && !leftover.empty()) {
+    scope.reason = TunnelReasonTag::kClientSentEarly;
+  }
+  if (scope.reason == TunnelReasonTag::kNone) {
+    decrypt(request, std::move(host));
+    return;
+  }
   std::make_shared<BlindTunnel>(std::move(socket_), connection_id_, std::move(host), request.port, scope.reason,
                                 request.user_agent, ctx_, std::move(leftover))
       ->start();
+}
+
+void ClientConnection::decrypt(const ProxyRequest& request, std::string host) {
+  info_.connection_id = connection_id_;
+  info_.host = std::move(host);
+  info_.port = request.port;
+  info_.connect_user_agent = request.user_agent;
+  info_.started = Clock::now();
+  info_.started_unix_us = nowUnixUs();
+  ctx_.connector->asyncConnect(
+      socket_.get_executor(), info_.host, info_.port,
+      [self = shared_from_this()](UpstreamResult result, std::unique_ptr<TlsStream> upstream) {
+        self->onUpstream(std::move(result), std::move(upstream));
+      },
+      ctx_.upstream_override);
+}
+
+void ClientConnection::onUpstream(UpstreamResult result, std::unique_ptr<TlsStream> upstream) {
+  const std::string where = "conn=" + std::to_string(connection_id_) + " host=" + info_.host;
+  if (result.status == UpstreamResult::Status::kVerifyFailed) {
+    logWarn("origin certificate rejected, tunneling instead " + where + " " + result.detail);
+    std::make_shared<BlindTunnel>(std::move(socket_), connection_id_, info_.host, info_.port,
+                                  TunnelReasonTag::kUpstreamVerifyFailed, info_.connect_user_agent, ctx_,
+                                  std::vector<std::uint8_t>{})
+        ->start();
+    return;
+  }
+  if (result.status != UpstreamResult::Status::kOk) {
+    logWarn("cannot reach the origin " + where + " " + result.detail);
+    replyAndClose(std::string(kBadGateway));
+    return;
+  }
+  upstream_ = std::move(upstream);
+  info_.upstream_connect = result.connect_time;
+  asio::async_write(socket_, asio::buffer(kEstablished),
+                    [self = shared_from_this()](const boost::system::error_code& ec, std::size_t) {
+                      if (ec) {
+                        self->closeDecryptAttempt();
+                        return;
+                      }
+                      self->client_tls_ =
+                          std::make_unique<TlsStream>(std::move(self->socket_), self->ctx_.terminator->context());
+                      self->ctx_.terminator->asyncHandshake(
+                          *self->client_tls_, self->info_.host, self->ctx_.config.upstream.tls_handshake_timeout,
+                          [self](const boost::system::error_code& handshake_ec, const ClientTlsResult& tls) {
+                            self->onClientHandshake(handshake_ec, tls);
+                          });
+                    });
+}
+
+void ClientConnection::onClientHandshake(const boost::system::error_code& ec, const ClientTlsResult& result) {
+  if (ec) {
+    ctx_.counters.client_tls_handshake_failures.fetch_add(1, std::memory_order_relaxed);
+    if (result.client_rejected_cert) {
+      ctx_.breaker->recordFailure(info_.host, Clock::now());
+      logWarn("client rejected our certificate, tunneling the host for a while conn=" +
+              std::to_string(connection_id_) + " host=" + info_.host + " " + ec.message());
+    } else {
+      logWarn("client TLS handshake failed conn=" + std::to_string(connection_id_) + " host=" + info_.host + " " +
+              ec.message());
+    }
+    closeDecryptAttempt();
+    return;
+  }
+  info_.alpn = result.alpn;
+  info_.client_handshake = std::chrono::duration_cast<std::chrono::microseconds>(result.handshake_time);
+  std::make_shared<DecryptedRelay>(std::move(client_tls_), std::move(upstream_), std::move(info_), ctx_)->start();
+}
+
+void ClientConnection::closeDecryptAttempt() {
+  boost::system::error_code ignored;
+  socket_.close(ignored);
+  if (client_tls_) {
+    client_tls_->next_layer().close(ignored);
+  }
+  if (upstream_) {
+    upstream_->next_layer().close(ignored);
+  }
 }
 
 void ClientConnection::replyAndClose(std::string response) {

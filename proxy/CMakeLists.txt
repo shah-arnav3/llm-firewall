@@ -123,6 +123,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_connect_request.cpp
     tests/test_counters.cpp
     tests/test_decrypted_relay.cpp
+    tests/test_decrypt_path.cpp
     tests/test_host_scope.cpp
     tests/test_metadata_logger.cpp
     tests/test_openssl_ptr.cpp
