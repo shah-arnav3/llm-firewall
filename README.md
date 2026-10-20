@@ -487,7 +487,8 @@ curl -x http://127.0.0.1:18443 https://example.com/
 
 Ctrl-C or SIGTERM shuts it down: open tunnels are closed and still logged, and a
 counter summary is printed. Exit codes: 0 clean, 1 unexpected error, 2 bad command
-line or configuration, 3 the metadata log cannot be opened, 4 the port cannot be bound.
+line or configuration, 3 the metadata log cannot be opened, 4 the port cannot be bound,
+5 `proxy.decrypt` is on and the certificates are missing or invalid.
 
 ### Creating the certificates
 
@@ -500,8 +501,9 @@ This creates the local CA and the leaf certificate described in
 (`~/Library/Application Support/llm-firewall/certs`, mode 0700): `ca.pem` (the CA
 certificate only), `leaf.pem`, and `leaf.key` (mode 0600). The CA key is destroyed
 before the command exits. It prints the CA's SHA-256 fingerprint. It changes nothing in
-the Keychain, so no client trusts the CA yet, and the proxy does not use these files
-yet. If the files exist it refuses (exit 2); `--force` replaces them.
+the Keychain, so no client trusts the CA yet. The proxy loads these files only when
+`proxy.decrypt` is true; it does not decrypt any connection yet. If the files exist it
+refuses (exit 2); `--force` replaces them.
 
 ### Phase 0: route Claude through the proxy
 

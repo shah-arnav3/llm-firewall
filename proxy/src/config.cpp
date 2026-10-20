@@ -112,6 +112,17 @@ class Section {
     return value;
   }
 
+  [[nodiscard]] bool boolean(const std::string& key, bool fallback) const {
+    if (!has(key)) {
+      return fallback;
+    }
+    const std::string value = scalar(key);
+    if (value != "true" && value != "false") {
+      fail(key, "must be true or false, got \"" + value + "\"");
+    }
+    return value == "true";
+  }
+
   [[nodiscard]] std::size_t bytes(const std::string& key, std::size_t fallback) const {
     return static_cast<std::size_t>(integer(key, static_cast<long long>(fallback), 1, kMaxBytes));
   }
@@ -348,6 +359,7 @@ ProxyConfig loadProxyConfig(const std::filesystem::path& file) {
   cfg.listen = parseListen(proxy);
   cfg.upstream = parseUpstream(proxy.child("upstream"));
   cfg.mode = parseMode(proxy);
+  cfg.decrypt = proxy.boolean("decrypt", cfg.decrypt);
   cfg.decrypt_hosts = parseDecryptHosts(root.child("scope"));
   cfg.clients = parseClients(root);
   cfg.certs = parseCerts(root.child("certs"));

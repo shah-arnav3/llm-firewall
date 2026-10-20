@@ -85,6 +85,9 @@ struct ProxyConfig {
   ListenConfig listen;
   UpstreamConfig upstream;
   CaptureMode mode = CaptureMode::kMetadataOnly;
+  /// proxy.decrypt: decrypt scoped hosts with the leaf in `certs`. Off by default,
+  /// because a client that does not trust the local CA would reject every decrypted connection.
+  bool decrypt = false;
   std::vector<std::string> decrypt_hosts;  ///< Exact names or "*.suffix" patterns, lower-cased. Never empty.
   std::vector<ClientRule> clients;
   CertConfig certs;

@@ -18,6 +18,10 @@
 namespace llmfw {
 
 class BlindTunnel;
+class ClientTlsBreaker;
+class ClientTlsTerminator;
+class LeafCertStore;
+class UpstreamTlsConnector;
 
 /// The open tunnels, so shutdown can close them and still capture them. Thread-safe.
 class TunnelRegistry {
@@ -52,6 +56,11 @@ struct ProxyContext {
   const CaptureBuildContext& build;
   TunnelRegistry& tunnels;
   const std::string& pac;  ///< The rendered PAC served at kPacPath.
+  // Set only when proxy.decrypt is on; null otherwise, and then nothing is decrypted.
+  const LeafCertStore* certs = nullptr;
+  ClientTlsBreaker* breaker = nullptr;
+  ClientTlsTerminator* terminator = nullptr;
+  UpstreamTlsConnector* connector = nullptr;
 };
 
 /// Process exit codes of llmfw-proxy.
@@ -61,14 +70,19 @@ enum ExitCode : int {
   kExitConfig = 2,      ///< Bad command line or configuration.
   kExitSink = 3,        ///< The metadata log cannot be opened.
   kExitBind = 4,        ///< The listen address cannot be bound.
+  kExitCerts = 5,       ///< proxy.decrypt is on and the certificates are missing or invalid.
 };
 
 /// Owns the io_context and its threads, every shared object, the drain thread and its sink.
 ///
 /// run():
-///   - Rejects proxy.mode "full" (kExitConfig): decryption is not implemented.
+///   - Rejects proxy.mode "full" (kExitConfig): body capture is not implemented.
+///   - With proxy.decrypt on: loads the leaf certificate (kExitCerts if it is missing or
+///     invalid; a warning if it expires within 30 days) and the upstream trust verifier
+///     (kExitConfig), before anything else starts.
 ///   - Startup: instance id -> metadata log (kExitSink on failure) -> shared objects ->
-///     drain -> listener (kExitBind on failure) -> render the PAC for the bound port ->
+///     drain -> with proxy.decrypt, the client TLS breaker, terminator and upstream
+///     connector -> listener (kExitBind on failure) -> render the PAC for the bound port ->
 ///     listen.io_threads I/O threads.
 ///   - Shutdown, on SIGINT, SIGTERM or requestStop(): stop accepting -> close every open
 ///     tunnel (each is still captured) -> once they have finished, or after 2 s, stop

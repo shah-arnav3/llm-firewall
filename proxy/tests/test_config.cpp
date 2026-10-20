@@ -163,6 +163,14 @@ TEST(Config, ParsesFullMode) {
   EXPECT_EQ(loadProxyConfig(file.path()).mode, CaptureMode::kFull);
 }
 
+TEST(Config, DecryptDefaultsToOffAndParsesTrue) {
+  const TempConfig off(exampleWith("  decrypt: false\n", ""));
+  EXPECT_FALSE(loadProxyConfig(off.path()).decrypt);
+  const TempConfig on(exampleWith("decrypt: false", "decrypt: true"));
+  EXPECT_TRUE(loadProxyConfig(on.path()).decrypt);
+  EXPECT_TRUE(loadError(exampleWith("decrypt: false", "decrypt: yes")).starts_with("proxy.decrypt:"));
+}
+
 TEST(Config, RejectsUnknownEnumValues) {
   EXPECT_TRUE(loadError(exampleWith("mode: metadata_only", "mode: verbose")).starts_with("proxy.mode:"));
   EXPECT_TRUE(loadError(exampleWith("trust: system", "trust: none")).starts_with("proxy.upstream.trust:"));

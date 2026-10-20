@@ -25,6 +25,12 @@ proxy:
   # "metadata_only" = phase 0: no bodies are captured, and records go to metadata_log.
   # "full"          = phase 1: bodies are captured (capped) and sent to the collector socket.
   mode: metadata_only
+  # Decrypt scoped hosts (scope.decrypt_hosts) with the leaf certificate in certs.dir.
+  # Leave this false until `llmfw-setup certs` has run AND the CA is trusted: a client
+  # that does not trust the CA rejects every decrypted connection (the client TLS
+  # breaker then tunnels that host for a while). When true, the proxy refuses to start
+  # (exit code 5) if the certificates are missing or invalid.
+  decrypt: false
   # ALPN protocols offered to the CLIENT on decrypted connections. Phase 0 is HTTP/1.1
   # only. Adding "h2" needs the planned nghttp2 HttpSession (not implemented).
   client_alpn: ["http/1.1"]

@@ -9,6 +9,8 @@
 #include <google/protobuf/util/json_util.h>
 
 #include "llmfw/proxy_context.hpp"
+#include "llmfw/setup_ca.hpp"
+#include "llmfw/setup_leaf.hpp"
 #include "net_test_util.hpp"
 
 namespace llmfw {
@@ -178,6 +180,52 @@ TEST(ProxyApp, RejectsFullMode) {
   ProxyConfig cfg = appConfig(tmp.path() / "metadata.jsonl", test::closedPort());
   cfg.mode = CaptureMode::kFull;
   EXPECT_EQ(ProxyApp(std::move(cfg)).run(), kExitConfig);
+}
+
+/// Writes a CA-issued leaf into a fresh private directory under `tmp` and points cfg.certs at it.
+void writeCerts(const TempDir& tmp, ProxyConfig& cfg) {
+  const fs::path dir = tmp.path() / "certs";
+  fs::create_directory(dir);
+  fs::permissions(dir, fs::perms::owner_all, fs::perm_options::replace);
+  setup::CaSpec spec;
+  spec.common_name = "llm-firewall local CA (app test)";
+  const setup::EphemeralCa ca = setup::generateConstrainedCa(spec);
+  setup::writeLeaf(setup::issueLeaf(ca, setup::LeafSpec{}), dir / "leaf.pem", dir / "leaf.key");
+  cfg.certs.dir = dir;
+}
+
+TEST(ProxyApp, ReturnsCertErrorWhenDecryptIsOnWithoutCertificates) {
+  const TempDir tmp;
+  ProxyConfig cfg = appConfig(tmp.path() / "metadata.jsonl", test::closedPort());
+  cfg.decrypt = true;
+  cfg.certs.dir = tmp.path() / "no-certs";
+  EXPECT_EQ(ProxyApp(std::move(cfg)).run(), kExitCerts);
+  EXPECT_FALSE(fs::exists(tmp.path() / "metadata.jsonl")) << "nothing else starts";
+}
+
+TEST(ProxyApp, ReturnsConfigErrorForAnUnreadableTrustBundle) {
+  const TempDir tmp;
+  ProxyConfig cfg = appConfig(tmp.path() / "metadata.jsonl", test::closedPort());
+  writeCerts(tmp, cfg);
+  cfg.decrypt = true;
+  cfg.upstream.trust = UpstreamTrustMode::kPemBundle;
+  cfg.upstream.pem_bundle = tmp.path() / "missing.pem";
+  EXPECT_EQ(ProxyApp(std::move(cfg)).run(), kExitConfig);
+}
+
+TEST(ProxyApp, StartsAndServesWithDecryptOn) {
+  const TempDir tmp;
+  const std::uint16_t port = test::closedPort();
+  ProxyConfig cfg = appConfig(tmp.path() / "metadata.jsonl", port);
+  writeCerts(tmp, cfg);
+  cfg.decrypt = true;
+  RunningApp running(std::move(cfg));
+  asio::io_context io;
+  tcp::socket client(io);
+  ASSERT_TRUE(connectWhenReady(client, port));
+  asio::write(client, asio::buffer(std::string("GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")));
+  EXPECT_TRUE(readToEnd(client).starts_with("HTTP/1.1 200 OK\r\n"));
+  EXPECT_EQ(running.stopAndWait(), kExitOk);
 }
 
 }  // namespace

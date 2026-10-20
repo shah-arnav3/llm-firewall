@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <csignal>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -12,12 +13,17 @@
 
 #include "llmfw/blind_tunnel.hpp"
 #include "llmfw/capture_sink.hpp"
+#include "llmfw/cert_store.hpp"
 #include "llmfw/client_classifier.hpp"
 #include "llmfw/listener.hpp"
 #include "llmfw/log.hpp"
 #include "llmfw/metadata_logger.hpp"
 #include "llmfw/pac.hpp"
 #include "llmfw/random_id.hpp"
+#include "llmfw/tls_breaker.hpp"
+#include "llmfw/tls_client.hpp"
+#include "llmfw/tls_server.hpp"
+#include "llmfw/trust_verifier.hpp"
 
 namespace llmfw {
 
@@ -25,6 +31,7 @@ namespace {
 
 constexpr std::chrono::seconds kTunnelCloseGrace{2};
 constexpr std::chrono::seconds kDrainGrace{2};
+constexpr std::chrono::days kLeafExpiryWarning{30};
 
 void logSummary(const ProxyCounters& c) {
   const auto v = [](const std::atomic<std::uint64_t>& a) { return std::to_string(a.load()); };
@@ -34,6 +41,14 @@ void logSummary(const ProxyCounters& c) {
           " captures_created=" + v(c.captures_created) +
           " captures_dropped_queue_full=" + v(c.captures_dropped_queue_full) +
           " captures_dropped_ipc_unavailable=" + v(c.captures_dropped_ipc_unavailable));
+}
+
+void warnIfLeafExpiresSoon(const LeafCertStore& certs) {
+  const auto left = std::chrono::floor<std::chrono::days>(certs.notAfter() - std::chrono::system_clock::now());
+  if (left < kLeafExpiryWarning) {
+    logWarn("the leaf certificate expires in " + std::to_string(left.count()) +
+            " days; run llmfw-setup certs --force to replace it");
+  }
 }
 
 }  // namespace
@@ -141,6 +156,24 @@ int ProxyApp::run() {
     return kExitConfig;
   }
 
+  std::optional<LeafCertStore> certs;
+  std::shared_ptr<const UpstreamTrustVerifier> verifier;
+  if (config_.decrypt) {
+    try {
+      certs.emplace(LeafCertStore::load(config_.certs));
+    } catch (const CertStoreError& e) {
+      logError(std::string("proxy.decrypt is on, but the certificates cannot be used: ") + e.what());
+      return kExitCerts;
+    }
+    try {
+      verifier = makeTrustVerifier(config_.upstream);
+    } catch (const ConfigError& e) {
+      logError(std::string("configuration: ") + e.what());
+      return kExitConfig;
+    }
+    warnIfLeafExpiresSoon(*certs);
+  }
+
   const std::string instance_id = randomUuid();  // Tells proxy starts apart in the logs.
   std::unique_ptr<MetadataLogger> sink;
   try {
@@ -162,6 +195,26 @@ int ProxyApp::run() {
   drain.start();
 
   State state(config_.listen.io_threads);
+  // Declared after `state`, so they are destroyed first: the connector joins its verify
+  // threads while the io_context they post results to still exists.
+  std::optional<ClientTlsBreaker> breaker;
+  std::unique_ptr<ClientTlsTerminator> terminator;
+  std::unique_ptr<UpstreamTlsConnector> connector;
+  if (certs) {
+    try {
+      breaker.emplace(config_.listen.client_tls_breaker_cooldown);
+      terminator = std::make_unique<ClientTlsTerminator>(*certs, config_.listen.client_alpn);
+      connector = std::make_unique<UpstreamTlsConnector>(config_.upstream, verifier, config_.listen.client_alpn);
+    } catch (const std::exception& e) {
+      logError(std::string("cannot set up decryption: ") + e.what());
+      drain.stop(kDrainGrace);
+      return kExitCerts;
+    }
+    ctx.certs = &*certs;
+    ctx.breaker = &*breaker;
+    ctx.terminator = terminator.get();
+    ctx.connector = connector.get();
+  }
   std::unique_ptr<Listener> listener;
   try {
     listener = std::make_unique<Listener>(state.io, config_.listen, ctx);
@@ -182,7 +235,7 @@ int ProxyApp::run() {
   listener->start();
   logInfo("llmfw-proxy listening on " + config_.listen.address + ":" +
           std::to_string(listener->localEndpoint().port()) + " instance=" + instance_id +
-          " mode=metadata_only log=" + config_.metadata_log.path.string());
+          " mode=metadata_only decrypt=" + (certs ? "on" : "off") + " log=" + config_.metadata_log.path.string());
 
   {
     const std::lock_guard lock(mu_);
