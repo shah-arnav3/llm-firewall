@@ -15,6 +15,7 @@ TEST(ProxyCounters, SnapshotCopiesEveryCounter) {
   counters.captures_dropped_queue_full = 4;
   counters.tunnels_scoped_no_cert = 5;
   counters.non_connect_requests_rejected = 6;
+  counters.connections_decrypted = 7;
   (void)counters.nextCaptureId();
   counters.observeQueueDepth(9);
   counters.observeQueueDepth(2);
@@ -28,6 +29,7 @@ TEST(ProxyCounters, SnapshotCopiesEveryCounter) {
   EXPECT_EQ(stats.captures_dropped_queue_full(), 4u);
   EXPECT_EQ(stats.tunnels_scoped_no_cert(), 5u);
   EXPECT_EQ(stats.non_connect_requests_rejected(), 6u);
+  EXPECT_EQ(stats.connections_decrypted(), 7u);
   EXPECT_EQ(stats.queue_high_watermark_items(), 9u);
 }
 

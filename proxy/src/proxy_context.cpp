@@ -36,7 +36,11 @@ constexpr std::chrono::days kLeafExpiryWarning{30};
 void logSummary(const ProxyCounters& c) {
   const auto v = [](const std::atomic<std::uint64_t>& a) { return std::to_string(a.load()); };
   logInfo("shutdown summary: connections_accepted=" + v(c.connections_accepted) +
-          " tunnels_unscoped=" + v(c.tunnels_unscoped) + " tunnels_scoped_no_cert=" + v(c.tunnels_scoped_no_cert) +
+          " connections_decrypted=" + v(c.connections_decrypted) + " tunnels_unscoped=" + v(c.tunnels_unscoped) +
+          " tunnels_scoped_no_cert=" + v(c.tunnels_scoped_no_cert) +
+          " tunnels_upstream_verify_failed=" + v(c.tunnels_upstream_verify_failed) +
+          " tunnels_client_tls_breaker=" + v(c.tunnels_client_tls_breaker) +
+          " client_tls_handshake_failures=" + v(c.client_tls_handshake_failures) +
           " non_connect_requests_rejected=" + v(c.non_connect_requests_rejected) +
           " captures_created=" + v(c.captures_created) +
           " captures_dropped_queue_full=" + v(c.captures_dropped_queue_full) +

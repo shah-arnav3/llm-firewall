@@ -68,6 +68,7 @@ add_library(llmfw_core STATIC
   src/config.cpp
   src/connect_handler.cpp
   src/counters.cpp
+  src/decrypted_relay.cpp
   src/fs_util.cpp
   src/host_scope.cpp
   src/listener.cpp
@@ -121,6 +122,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_config.cpp
     tests/test_connect_request.cpp
     tests/test_counters.cpp
+    tests/test_decrypted_relay.cpp
     tests/test_host_scope.cpp
     tests/test_metadata_logger.cpp
     tests/test_openssl_ptr.cpp

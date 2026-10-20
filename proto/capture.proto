@@ -240,6 +240,7 @@ message ProxyStats {
   uint64 http_parse_errors = 15;
   uint64 non_connect_requests_rejected = 16;  // Plain (non-CONNECT) requests answered with 405.
   uint64 queue_high_watermark_items = 17;     // Largest capture-queue depth seen, in captures.
+  uint64 connections_decrypted = 18;          // Client connections relayed with decryption.
 }
 
 // Metadata log record (written as JSON Lines by the proxy; never sent on the socket)
