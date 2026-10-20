@@ -79,6 +79,7 @@ add_library(llmfw_core STATIC
   src/random_id.cpp
   src/tls_breaker.cpp
   src/tls_client.cpp
+  src/tls_server.cpp
   src/trust_verifier.cpp)
 target_include_directories(llmfw_core
   PUBLIC  include
@@ -132,6 +133,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_setup_profile.cpp
     tests/test_tls_breaker.cpp
     tests/test_tls_client.cpp
+    tests/test_tls_server.cpp
     tests/test_trust_verifier.cpp
     tests/test_tunnel_registry.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_setup_core GTest::gtest_main)
