@@ -58,6 +58,7 @@ configure_file(cmake/pac_template.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/gen-pac/llm
 
 # Core proxy library, linked by the tests
 add_library(llmfw_core STATIC
+  src/alpn.cpp
   src/blind_tunnel.cpp
   src/capture_builder.cpp
   src/capture_queue.cpp

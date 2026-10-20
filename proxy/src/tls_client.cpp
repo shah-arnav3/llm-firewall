@@ -1,6 +1,5 @@
 #include "llmfw/tls_client.hpp"
 
-#include <stdexcept>
 #include <utility>
 
 #include <boost/asio/connect.hpp>
@@ -10,6 +9,7 @@
 
 #include <openssl/ssl.h>
 
+#include "llmfw/alpn.hpp"
 #include "llmfw/openssl_ptr.hpp"
 
 namespace llmfw {
@@ -19,18 +19,6 @@ namespace {
 // Verifications in flight at once. Each one usually takes milliseconds; more threads
 // only help when many evaluations wait on the network together.
 constexpr std::size_t kVerifyThreads = 2;
-
-std::vector<unsigned char> alpnWireFormat(const std::vector<std::string>& protocols) {
-  std::vector<unsigned char> wire;
-  for (const std::string& protocol : protocols) {
-    if (protocol.empty() || protocol.size() > 255) {
-      throw std::invalid_argument("ALPN protocol names must be 1 to 255 bytes");
-    }
-    wire.push_back(static_cast<unsigned char>(protocol.size()));
-    wire.insert(wire.end(), protocol.begin(), protocol.end());
-  }
-  return wire;
-}
 
 }  // namespace
 
