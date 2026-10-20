@@ -77,6 +77,7 @@ message Capture {
     HttpExchange http = 10;
     WebSocketMessage websocket = 11;
     TunnelSummary tunnel = 12;
+    DecryptedConnection decrypted = 13;
   }
 }
 
@@ -195,6 +196,19 @@ message TunnelSummary {
   uint64 duration_us = 6;
 }
 
+// A decrypted client connection, recorded once when it closes. It covers the
+// connection itself; HTTP exchanges on it are separate captures with the same connection_id.
+message DecryptedConnection {
+  string host = 1;                    // The CONNECT host, normalized.
+  uint32 port = 2;
+  string alpn = 3;                    // Negotiated with the client. Empty means HTTP/1.1.
+  uint64 bytes_client_to_server = 4;  // Decrypted application bytes.
+  uint64 bytes_server_to_client = 5;
+  uint64 duration_us = 6;             // From the CONNECT to the close.
+  uint64 upstream_connect_us = 7;     // Resolve, TCP, TLS and verification to the origin.
+  uint64 client_handshake_us = 8;     // Our TLS handshake with the client.
+}
+
 enum TunnelReason {
   TUNNEL_REASON_UNSPECIFIED = 0;
   TUNNEL_REASON_UNSCOPED_HOST = 1;          // Host not in scope.decrypt_hosts.
@@ -262,4 +276,10 @@ message MetadataRecord {
   string ws_direction = 23;
   uint64 ws_payload_bytes = 24;
   uint64 tunnel_duration_us = 25;   // How long a tunnel stayed open.
+  // Decrypted connections (kind "decrypted"); request_bytes and response_bytes hold
+  // the decrypted bytes each way.
+  string alpn = 26;
+  uint64 upstream_connect_us = 27;
+  uint64 client_handshake_us = 28;
+  uint64 connection_duration_us = 29;
 }

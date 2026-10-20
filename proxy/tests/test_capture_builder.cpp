@@ -91,6 +91,65 @@ TEST(BuildTunnelCapture, UnknownClientWithoutUserAgent) {
   EXPECT_EQ(buildTunnelCapture({classifier, counters}, t)->capture().client().path(), llmfw::v1::CLIENT_PATH_UNKNOWN);
 }
 
+DecryptedObservation sampleDecrypted() {
+  DecryptedObservation d;
+  d.connection_id = 43;
+  d.host = "api.anthropic.com";
+  d.port = 443;
+  d.alpn = "http/1.1";
+  d.connect_user_agent = "";
+  d.bytes_client_to_server = 5'000;
+  d.bytes_server_to_client = 70'000;
+  d.start_unix_us = 1'790'000'000'000'000;
+  d.duration = std::chrono::microseconds(4'000'000);
+  d.upstream_connect = std::chrono::microseconds(30'000);
+  d.client_handshake = std::chrono::microseconds(2'000);
+  return d;
+}
+
+TEST(BuildDecryptedCapture, CopiesConnectionMetadata) {
+  const ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  const auto frame = buildDecryptedCapture({classifier, counters}, sampleDecrypted());
+  const llmfw::v1::Capture& capture = frame->capture();
+  EXPECT_EQ(capture.capture_id(), 1u);
+  EXPECT_EQ(capture.connection_id(), 43u);
+  EXPECT_EQ(capture.client().path(), llmfw::v1::CLIENT_PATH_UNKNOWN);
+  EXPECT_EQ(capture.timings().start_unix_us(), 1'790'000'000'000'000);
+  ASSERT_EQ(capture.payload_case(), llmfw::v1::Capture::kDecrypted);
+  const llmfw::v1::DecryptedConnection& decrypted = capture.decrypted();
+  EXPECT_EQ(decrypted.host(), "api.anthropic.com");
+  EXPECT_EQ(decrypted.port(), 443u);
+  EXPECT_EQ(decrypted.alpn(), "http/1.1");
+  EXPECT_EQ(decrypted.bytes_client_to_server(), 5'000u);
+  EXPECT_EQ(decrypted.bytes_server_to_client(), 70'000u);
+  EXPECT_EQ(decrypted.duration_us(), 4'000'000u);
+  EXPECT_EQ(decrypted.upstream_connect_us(), 30'000u);
+  EXPECT_EQ(decrypted.client_handshake_us(), 2'000u);
+}
+
+TEST(BuildDecryptedCapture, ClassifiesTheConnectUserAgent) {
+  const ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  DecryptedObservation d = sampleDecrypted();
+  d.connect_user_agent = "Mozilla/5.0 Claude/2.9 Electron/38";
+  EXPECT_EQ(buildDecryptedCapture({classifier, counters}, d)->capture().client().path(), llmfw::v1::CLIENT_PATH_UI);
+}
+
+TEST(BuildDecryptedCapture, ClampsNegativeDurationsToZero) {
+  const ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  DecryptedObservation d = sampleDecrypted();
+  d.duration = std::chrono::microseconds(-1);
+  d.upstream_connect = std::chrono::microseconds(-1);
+  d.client_handshake = std::chrono::microseconds(-1);
+  const auto frame = buildDecryptedCapture({classifier, counters}, d);
+  const llmfw::v1::DecryptedConnection& decrypted = frame->capture().decrypted();
+  EXPECT_EQ(decrypted.duration_us(), 0u);
+  EXPECT_EQ(decrypted.upstream_connect_us(), 0u);
+  EXPECT_EQ(decrypted.client_handshake_us(), 0u);
+}
+
 TEST(ApproximateFrameBytes, IsTheSerializedSize) {
   const ClientClassifier classifier = desktopClassifier();
   ProxyCounters counters;

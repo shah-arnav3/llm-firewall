@@ -93,6 +93,30 @@ TEST(ToMetadataRecord, MapsTunnelFields) {
   EXPECT_EQ(record.timings().start_unix_us(), 1'790'000'000'000'000);
 }
 
+TEST(ToMetadataRecord, MapsDecryptedConnectionFields) {
+  llmfw::v1::Capture capture;
+  capture.set_capture_id(4);
+  llmfw::v1::DecryptedConnection& decrypted = *capture.mutable_decrypted();
+  decrypted.set_host("claude.ai");
+  decrypted.set_port(443);
+  decrypted.set_alpn("http/1.1");
+  decrypted.set_bytes_client_to_server(10);
+  decrypted.set_bytes_server_to_client(20);
+  decrypted.set_duration_us(3'000);
+  decrypted.set_upstream_connect_us(200);
+  decrypted.set_client_handshake_us(100);
+  const llmfw::v1::MetadataRecord record = toMetadataRecord(capture, logConfig("unused"), "inst");
+  EXPECT_EQ(record.kind(), "decrypted");
+  EXPECT_EQ(record.host(), "claude.ai");
+  EXPECT_EQ(record.alpn(), "http/1.1");
+  EXPECT_EQ(record.request_bytes(), 10u);
+  EXPECT_EQ(record.response_bytes(), 20u);
+  EXPECT_EQ(record.connection_duration_us(), 3'000u);
+  EXPECT_EQ(record.upstream_connect_us(), 200u);
+  EXPECT_EQ(record.client_handshake_us(), 100u);
+  EXPECT_EQ(record.tunnel_reason(), llmfw::v1::TUNNEL_REASON_UNSPECIFIED);
+}
+
 TEST(ToMetadataRecord, KeepsUserAgentOnlyWhenAllowlisted) {
   MetadataLogConfig cfg = logConfig("unused");
   cfg.logged_header_values = {"content-type"};

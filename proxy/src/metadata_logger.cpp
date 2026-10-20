@@ -54,6 +54,18 @@ llmfw::v1::MetadataRecord toMetadataRecord(const llmfw::v1::Capture& capture, co
       record.set_tunnel_duration_us(tunnel.duration_us());
       break;
     }
+    case llmfw::v1::Capture::kDecrypted: {
+      const llmfw::v1::DecryptedConnection& decrypted = capture.decrypted();
+      record.set_kind("decrypted");
+      record.set_host(decrypted.host());
+      record.set_alpn(decrypted.alpn());
+      record.set_request_bytes(decrypted.bytes_client_to_server());
+      record.set_response_bytes(decrypted.bytes_server_to_client());
+      record.set_connection_duration_us(decrypted.duration_us());
+      record.set_upstream_connect_us(decrypted.upstream_connect_us());
+      record.set_client_handshake_us(decrypted.client_handshake_us());
+      break;
+    }
     case llmfw::v1::Capture::kHttp: record.set_kind("http"); break;
     case llmfw::v1::Capture::kWebsocket: record.set_kind("websocket"); break;
     case llmfw::v1::Capture::PAYLOAD_NOT_SET: break;

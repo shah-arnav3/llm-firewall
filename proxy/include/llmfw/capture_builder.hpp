@@ -39,6 +39,27 @@ struct TunnelObservation {
 [[nodiscard]] std::unique_ptr<llmfw::v1::Frame> buildTunnelCapture(const CaptureBuildContext& ctx,
                                                                    const TunnelObservation& tunnel);
 
+/// What the proxy knows about a decrypted connection once it has closed.
+struct DecryptedObservation {
+  std::uint64_t connection_id = 0;
+  std::string_view host;  ///< Normalized.
+  std::uint16_t port = 0;
+  std::string_view alpn;  ///< Negotiated with the client; empty means HTTP/1.1.
+  std::string_view connect_user_agent;
+  std::uint64_t bytes_client_to_server = 0;
+  std::uint64_t bytes_server_to_client = 0;
+  std::int64_t start_unix_us = 0;  ///< When the CONNECT arrived.
+  std::chrono::microseconds duration{0};
+  std::chrono::microseconds upstream_connect{0};
+  std::chrono::microseconds client_handshake{0};
+};
+
+/// Builds a Capture{decrypted} for the connection as a whole. It holds no content.
+/// Takes the next capture id from ctx.counters. The client path comes from the CONNECT
+/// User-Agent, which is also copied into ClientInfo.user_agent.
+[[nodiscard]] std::unique_ptr<llmfw::v1::Frame> buildDecryptedCapture(const CaptureBuildContext& ctx,
+                                                                      const DecryptedObservation& connection);
+
 /// A frame's size for the capture queue's byte budget: its serialized size.
 [[nodiscard]] std::size_t approximateFrameBytes(const llmfw::v1::Frame& frame);
 
