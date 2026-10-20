@@ -17,31 +17,39 @@
 
 namespace llmfw {
 
-class BlindTunnel;
 class ClientTlsBreaker;
 class ClientTlsTerminator;
 class LeafCertStore;
 class UpstreamTlsConnector;
 
-/// The open tunnels, so shutdown can close them and still capture them. Thread-safe.
+/// A connection that shutdown can end early. close() must be safe from any thread and
+/// must still lead to the connection's capture and its TunnelRegistry::remove().
+class RegisteredConnection {
+ public:
+  virtual ~RegisteredConnection() = default;
+  virtual void close() = 0;
+};
+
+/// The open tunnels and decrypted connections, so shutdown can close them and still
+/// capture them. Thread-safe.
 class TunnelRegistry {
  public:
-  /// Registers an open tunnel. Returns false once closeAll() has been called; the
-  /// tunnel must then close itself.
-  [[nodiscard]] bool add(std::uint64_t connection_id, std::weak_ptr<BlindTunnel> tunnel);
+  /// Registers an open connection. Returns false once closeAll() has been called; the
+  /// connection must then close itself.
+  [[nodiscard]] bool add(std::uint64_t connection_id, std::weak_ptr<RegisteredConnection> connection);
 
   /// Removes a tunnel. After closeAll(), removing the last one calls the on_empty callback.
   void remove(std::uint64_t connection_id);
 
-  /// Refuses new tunnels, asks every open one to close, and calls `on_empty` (on the
-  /// thread that removes the last tunnel, or right away if none are open).
+  /// Refuses new connections, asks every open one to close, and calls `on_empty` (on the
+  /// thread that removes the last one, or right away if none are open).
   void closeAll(std::function<void()> on_empty);
 
   [[nodiscard]] std::size_t size() const;
 
  private:
   mutable std::mutex mu_;
-  std::unordered_map<std::uint64_t, std::weak_ptr<BlindTunnel>> open_;
+  std::unordered_map<std::uint64_t, std::weak_ptr<RegisteredConnection>> open_;
   bool closing_ = false;
   std::function<void()> on_empty_;
 };

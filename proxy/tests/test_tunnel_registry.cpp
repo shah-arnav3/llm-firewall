@@ -20,7 +20,7 @@ TEST(TunnelRegistry, CloseAllWithNothingOpenCallsBackAtOnce) {
 
 TEST(TunnelRegistry, ExpiredTunnelsDoNotCountAsOpen) {
   TunnelRegistry registry;
-  ASSERT_TRUE(registry.add(1, std::weak_ptr<BlindTunnel>()));
+  ASSERT_TRUE(registry.add(1, std::weak_ptr<RegisteredConnection>()));
   EXPECT_EQ(registry.size(), 1u);
   bool called = false;
   registry.closeAll([&] { called = true; });
@@ -53,7 +53,7 @@ TEST(TunnelRegistry, CallsBackOnlyWhenLastOpenTunnelIsRemoved) {
 TEST(TunnelRegistry, RefusesNewTunnelsAfterCloseAll) {
   TunnelRegistry registry;
   registry.closeAll([] {});
-  EXPECT_FALSE(registry.add(1, std::weak_ptr<BlindTunnel>()));
+  EXPECT_FALSE(registry.add(1, std::weak_ptr<RegisteredConnection>()));
 }
 
 }  // namespace

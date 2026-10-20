@@ -31,7 +31,7 @@ namespace llmfw {
 ///   5. On end, it pushes one Capture{tunnel} with the byte counts and duration.
 /// Every handler runs on the client socket's executor, which must be a strand (or a
 /// single-threaded context), so the tunnel's state needs no locking.
-class BlindTunnel final : public std::enable_shared_from_this<BlindTunnel> {
+class BlindTunnel final : public RegisteredConnection, public std::enable_shared_from_this<BlindTunnel> {
  public:
   /// @param host normalized if normalization succeeded, otherwise as the client sent it.
   BlindTunnel(tcp::socket client, std::uint64_t connection_id, std::string host, std::uint16_t port,
@@ -43,7 +43,7 @@ class BlindTunnel final : public std::enable_shared_from_this<BlindTunnel> {
 
   /// Ends the tunnel from any thread, as if both sides had closed. The capture is
   /// still pushed if the tunnel was established.
-  void close();
+  void close() override;
 
  private:
   using Buffer = std::array<std::uint8_t, 16 * 1024>;

@@ -53,12 +53,12 @@ void warnIfLeafExpiresSoon(const LeafCertStore& certs) {
 
 }  // namespace
 
-bool TunnelRegistry::add(std::uint64_t connection_id, std::weak_ptr<BlindTunnel> tunnel) {
+bool TunnelRegistry::add(std::uint64_t connection_id, std::weak_ptr<RegisteredConnection> connection) {
   const std::lock_guard lock(mu_);
   if (closing_) {
     return false;
   }
-  open_[connection_id] = std::move(tunnel);
+  open_[connection_id] = std::move(connection);
   return true;
 }
 
@@ -77,14 +77,14 @@ void TunnelRegistry::remove(std::uint64_t connection_id) {
 }
 
 void TunnelRegistry::closeAll(std::function<void()> on_empty) {
-  std::vector<std::shared_ptr<BlindTunnel>> to_close;
+  std::vector<std::shared_ptr<RegisteredConnection>> to_close;
   bool nothing_open = false;
   {
     const std::lock_guard lock(mu_);
     closing_ = true;
     for (auto it = open_.begin(); it != open_.end();) {
-      if (auto tunnel = it->second.lock()) {
-        to_close.push_back(std::move(tunnel));
+      if (auto connection = it->second.lock()) {
+        to_close.push_back(std::move(connection));
         ++it;
       } else {
         it = open_.erase(it);
@@ -98,8 +98,8 @@ void TunnelRegistry::closeAll(std::function<void()> on_empty) {
   if (nothing_open && on_empty) {
     on_empty();
   }
-  for (const auto& tunnel : to_close) {
-    tunnel->close();
+  for (const auto& connection : to_close) {
+    connection->close();
   }
 }
 
