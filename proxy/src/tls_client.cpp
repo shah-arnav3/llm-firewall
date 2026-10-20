@@ -26,7 +26,7 @@ constexpr std::size_t kVerifyThreads = 2;
 /// copy handed to the verify pool, which nothing else touches.
 struct UpstreamTlsConnector::Operation : std::enable_shared_from_this<Operation> {
   Operation(UpstreamTlsConnector& connector, asio::any_io_executor ex, std::string host, std::uint16_t port,
-            UpstreamHandler handler)
+            UpstreamHandler handler, const tcp::endpoint* endpoint_override)
       : connector(connector),
         executor(ex),
         resolver(ex),
@@ -35,6 +35,7 @@ struct UpstreamTlsConnector::Operation : std::enable_shared_from_this<Operation>
         host(std::move(host)),
         port(port),
         handler(std::move(handler)),
+        endpoint_override(endpoint_override),
         started(Clock::now()) {}
 
   void start() {
@@ -43,6 +44,11 @@ struct UpstreamTlsConnector::Operation : std::enable_shared_from_this<Operation>
       return;
     }
     arm(connector.cfg_.connect_timeout);
+    if (endpoint_override != nullptr) {
+      stream->lowest_layer().async_connect(
+          *endpoint_override, [self = shared_from_this()](const boost::system::error_code& ec) { self->onConnected(ec); });
+      return;
+    }
     resolver.async_resolve(host, std::to_string(port),
                            [self = shared_from_this()](const boost::system::error_code& ec,
                                                        const tcp::resolver::results_type& results) {
@@ -163,6 +169,7 @@ struct UpstreamTlsConnector::Operation : std::enable_shared_from_this<Operation>
   std::string host;
   std::uint16_t port;
   UpstreamHandler handler;
+  const tcp::endpoint* endpoint_override;
   Clock::time_point started;
   std::string selected_alpn;
   bool done = false;
@@ -190,8 +197,9 @@ UpstreamTlsConnector::UpstreamTlsConnector(const UpstreamConfig& cfg,
 UpstreamTlsConnector::~UpstreamTlsConnector() { verify_pool_.join(); }
 
 void UpstreamTlsConnector::asyncConnect(asio::any_io_executor ex, std::string host, std::uint16_t port,
-                                        UpstreamHandler handler) {
-  auto operation = std::make_shared<Operation>(*this, ex, std::move(host), port, std::move(handler));
+                                        UpstreamHandler handler, const tcp::endpoint* endpoint_override) {
+  auto operation =
+      std::make_shared<Operation>(*this, ex, std::move(host), port, std::move(handler), endpoint_override);
   asio::post(ex, [operation] { operation->start(); });
 }
 

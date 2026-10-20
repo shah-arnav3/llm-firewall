@@ -66,6 +66,11 @@ class Harness {
   }
 
   [[nodiscard]] tcp::socket newClient() { return tcp::socket(client_io_); }
+  /// Sends every upstream connect to 127.0.0.1:port, whatever the host.
+  void overrideUpstream(std::uint16_t port) {
+    override_ = tcp::endpoint(asio::ip::make_address("127.0.0.1"), port);
+    context_.upstream_override = &override_;
+  }
   CaptureQueue& queue() { return queue_; }
   ProxyCounters& counters() { return counters_; }
 
@@ -79,6 +84,7 @@ class Harness {
   TunnelRegistry tunnels_;
   std::string pac_;
   ProxyContext context_{config_, scope_, queue_, counters_, build_, tunnels_, pac_};
+  tcp::endpoint override_;
   asio::io_context io_;
   asio::executor_work_guard<asio::io_context::executor_type> work_ = asio::make_work_guard(io_);
   std::thread work_thread_;
@@ -147,6 +153,17 @@ TEST(BlindTunnel, Replies502WhenConnectTimesOut) {
   h.open(client, 9, TunnelReasonTag::kUnscopedHost, "", "192.0.2.1");  // TEST-NET-1: never answers.
   EXPECT_TRUE(readToEnd(client).starts_with("HTTP/1.1 502 Bad Gateway"));
   EXPECT_LT(Clock::now() - start, milliseconds(3000));
+}
+
+TEST(BlindTunnel, ConnectsToTheUpstreamOverrideInsteadOfResolving) {
+  Harness h;
+  Upstream upstream(echo);
+  h.overrideUpstream(upstream.port());
+  tcp::socket client = h.newClient();
+  h.open(client, 443, TunnelReasonTag::kUnscopedHost, "", "llmfw-test.invalid");
+  EXPECT_EQ(readExactly(client, kEstablished.size()), kEstablished);
+  asio::write(client, asio::buffer(std::string("ping")));
+  EXPECT_EQ(readExactly(client, 4), "ping");
 }
 
 TEST(BlindTunnel, IdleTimeoutClosesAndCaptures) {

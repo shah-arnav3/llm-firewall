@@ -61,6 +61,11 @@ void BlindTunnel::start() {
     self->started_unix_us_ = nowUnixUs();
     self->countAndLogOpen();
     self->armTimer(self->ctx_.config.upstream.connect_timeout);
+    if (self->ctx_.upstream_override != nullptr) {
+      self->upstream_.async_connect(*self->ctx_.upstream_override,
+                                    [self](const boost::system::error_code& ec) { self->onConnected(ec); });
+      return;
+    }
     self->resolver_.async_resolve(self->host_, std::to_string(self->port_),
                                   [self](const boost::system::error_code& ec, const tcp::resolver::results_type& results) {
                                     self->onResolved(ec, results);

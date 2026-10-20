@@ -61,7 +61,10 @@ class UpstreamTlsConnector {
   /// Resolves and connects within connect_timeout, then handshakes and verifies within
   /// tls_handshake_timeout. Calls `handler` exactly once, on `ex`: with kOk and the
   /// connected stream, or with another status and nullptr.
-  void asyncConnect(asio::any_io_executor ex, std::string host, std::uint16_t port, UpstreamHandler handler);
+  /// @param endpoint_override tests only: connect here instead of resolving `host`
+  ///        (SNI and verification still use `host`). Must outlive the operation.
+  void asyncConnect(asio::any_io_executor ex, std::string host, std::uint16_t port, UpstreamHandler handler,
+                    const tcp::endpoint* endpoint_override = nullptr);
 
  private:
   struct Operation;

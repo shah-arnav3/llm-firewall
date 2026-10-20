@@ -364,6 +364,24 @@ TEST(UpstreamTlsConnector, TimesOutWhileVerificationIsStillRunning) {
   EXPECT_EQ(outcome->stream, nullptr);
 }
 
+TEST(UpstreamTlsConnector, ConnectsToTheEndpointOverrideButVerifiesTheHost) {
+  const TempDir tmp;
+  const TestPki pki("DNS:claude.ai");
+  TlsServer server(pki);
+  asio::io_context io;
+  UpstreamTlsConnector connector(fastConfig(), std::make_shared<PemBundleTrustVerifier>(pki.writeBundle(tmp)),
+                                 {"http/1.1"});
+  const tcp::endpoint endpoint(asio::ip::make_address("127.0.0.1"), server.port());
+  std::optional<UpstreamResult> result;
+  connector.asyncConnect(
+      asio::make_strand(io), "claude.ai", 443,
+      [&](UpstreamResult r, std::unique_ptr<TlsStream>) { result = std::move(r); }, &endpoint);
+  io.run();
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->status, UpstreamResult::Status::kOk) << result->detail;
+  EXPECT_EQ(server.seen().sni, "claude.ai");
+}
+
 TEST(UpstreamTlsConnector, RejectsInvalidAlpnNames) {
   const TempDir tmp;
   const TestPki pki;

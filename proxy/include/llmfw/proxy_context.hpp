@@ -69,6 +69,9 @@ struct ProxyContext {
   ClientTlsBreaker* breaker = nullptr;
   ClientTlsTerminator* terminator = nullptr;
   UpstreamTlsConnector* connector = nullptr;
+  /// Tests only: connect every upstream here instead of resolving the CONNECT host.
+  /// SNI and certificate verification still use the CONNECT host. Null in the proxy.
+  const tcp::endpoint* upstream_override = nullptr;
 };
 
 /// Process exit codes of llmfw-proxy.
