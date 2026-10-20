@@ -5,6 +5,9 @@
 
 #include <arpa/inet.h>
 
+#include "llmfw/cert_store.hpp"
+#include "llmfw/tls_breaker.hpp"
+
 namespace llmfw {
 
 namespace {
@@ -80,7 +83,8 @@ bool HostScope::matchesPattern(std::string_view pattern, std::string_view normal
   return normalized_host.size() > suffix.size() && normalized_host.ends_with(suffix);
 }
 
-ScopeResult decideScope(std::string_view raw_host, std::uint16_t port, const HostScope& scope) {
+ScopeResult decideScope(std::string_view raw_host, std::uint16_t port, const HostScope& scope,
+                        const LeafCertStore* certs, const ClientTlsBreaker* breaker, Clock::time_point now) {
   ScopeResult result;
   const auto host = HostScope::normalizeHost(raw_host);
   if (!host) {
@@ -91,8 +95,12 @@ ScopeResult decideScope(std::string_view raw_host, std::uint16_t port, const Hos
     result.reason = TunnelReasonTag::kUnscopedHost;
   } else if (port != kTlsPort) {
     result.reason = TunnelReasonTag::kNonTlsPort;
-  } else {
+  } else if (certs == nullptr || !certs->covers(*host)) {
     result.reason = TunnelReasonTag::kScopedNoCert;
+  } else if (breaker != nullptr && breaker->isOpen(*host, now)) {
+    result.reason = TunnelReasonTag::kClientTlsBreaker;
+  } else {
+    result.reason = TunnelReasonTag::kNone;
   }
   return result;
 }

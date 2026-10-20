@@ -11,7 +11,11 @@
 
 namespace llmfw {
 
+class ClientTlsBreaker;
+class LeafCertStore;
+
 struct ScopeResult {
+  /// Why the target is tunneled, or kNone if it should be decrypted.
   TunnelReasonTag reason = TunnelReasonTag::kUnscopedHost;
   std::string normalized_host;  ///< Empty when the host failed normalization.
 };
@@ -43,12 +47,15 @@ class HostScope {
   std::vector<std::string> patterns_;
 };
 
-/// Decides why a CONNECT target is tunneled. Checks run in this order, and the first hit wins:
-///   1. host fails normalization, or is not in scope -> kUnscopedHost
-///   2. port != 443                                  -> kNonTlsPort
-///   3. otherwise                                    -> kScopedNoCert
-/// Decryption is not implemented, so every target is tunneled; the reason records
-/// which targets would be decrypted once it is.
-[[nodiscard]] ScopeResult decideScope(std::string_view raw_host, std::uint16_t port, const HostScope& scope);
+/// Decides whether a CONNECT target is decrypted. Checks run in this order, and the first hit wins:
+///   1. host fails normalization, or is not in scope       -> kUnscopedHost
+///   2. port != 443                                        -> kNonTlsPort
+///   3. no cert store, or no leaf SAN covers the host       -> kScopedNoCert
+///   4. the breaker is open for the host at `now`          -> kClientTlsBreaker
+///   5. otherwise                                          -> kNone (decrypt)
+/// With `certs` null (decryption off), no target is ever decrypted. `breaker` may be null.
+[[nodiscard]] ScopeResult decideScope(std::string_view raw_host, std::uint16_t port, const HostScope& scope,
+                                      const LeafCertStore* certs = nullptr, const ClientTlsBreaker* breaker = nullptr,
+                                      Clock::time_point now = {});
 
 }  // namespace llmfw
