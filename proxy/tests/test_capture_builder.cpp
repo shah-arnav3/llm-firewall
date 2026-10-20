@@ -66,6 +66,7 @@ TEST(BuildTunnelCapture, MapsEveryReason) {
       {TunnelReasonTag::kUpstreamVerifyFailed, llmfw::v1::TUNNEL_REASON_UPSTREAM_VERIFY_FAILED},
       {TunnelReasonTag::kClientTlsBreaker, llmfw::v1::TUNNEL_REASON_CLIENT_TLS_BREAKER},
       {TunnelReasonTag::kNonTlsPort, llmfw::v1::TUNNEL_REASON_NON_TLS_PORT},
+      {TunnelReasonTag::kClientSentEarly, llmfw::v1::TUNNEL_REASON_CLIENT_SENT_EARLY},
   };
   for (const auto& [tag, expected] : cases) {
     TunnelObservation t = sampleTunnel();

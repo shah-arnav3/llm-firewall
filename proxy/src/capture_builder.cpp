@@ -24,6 +24,7 @@ llmfw::v1::TunnelReason toProto(TunnelReasonTag reason) {
     case TunnelReasonTag::kUpstreamVerifyFailed: return llmfw::v1::TUNNEL_REASON_UPSTREAM_VERIFY_FAILED;
     case TunnelReasonTag::kClientTlsBreaker: return llmfw::v1::TUNNEL_REASON_CLIENT_TLS_BREAKER;
     case TunnelReasonTag::kNonTlsPort: return llmfw::v1::TUNNEL_REASON_NON_TLS_PORT;
+    case TunnelReasonTag::kClientSentEarly: return llmfw::v1::TUNNEL_REASON_CLIENT_SENT_EARLY;
     case TunnelReasonTag::kNone: break;
   }
   return llmfw::v1::TUNNEL_REASON_UNSPECIFIED;

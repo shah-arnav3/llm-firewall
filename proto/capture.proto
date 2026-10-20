@@ -216,6 +216,9 @@ enum TunnelReason {
   TUNNEL_REASON_UPSTREAM_VERIFY_FAILED = 3; // Strict upstream verification failed. The client verifies for itself.
   TUNNEL_REASON_CLIENT_TLS_BREAKER = 4;     // The client recently rejected our leaf for this host.
   TUNNEL_REASON_NON_TLS_PORT = 5;           // CONNECT to a port other than 443.
+  // The client sent bytes after its CONNECT head before our 200. They would be the
+  // start of its TLS handshake, which cannot be handed to our TLS server.
+  TUNNEL_REASON_CLIENT_SENT_EARLY = 6;
 }
 
 // Proxy statistics (cumulative since proxy_instance start)

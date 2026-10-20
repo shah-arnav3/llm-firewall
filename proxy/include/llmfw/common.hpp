@@ -19,6 +19,7 @@ enum class TunnelReasonTag {
   kUpstreamVerifyFailed,
   kClientTlsBreaker,
   kNonTlsPort,
+  kClientSentEarly,
 };
 
 }  // namespace llmfw

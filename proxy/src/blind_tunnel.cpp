@@ -27,6 +27,7 @@ const char* reasonName(TunnelReasonTag reason) {
     case TunnelReasonTag::kUpstreamVerifyFailed: return "upstream_verify_failed";
     case TunnelReasonTag::kClientTlsBreaker: return "client_tls_breaker";
     case TunnelReasonTag::kNonTlsPort: return "non_tls_port";
+    case TunnelReasonTag::kClientSentEarly: return "client_sent_early";
     case TunnelReasonTag::kNone: break;
   }
   return "none";
@@ -89,6 +90,7 @@ void BlindTunnel::countAndLogOpen() {
       c.tunnels_client_tls_breaker.fetch_add(1, std::memory_order_relaxed);
       break;
     case TunnelReasonTag::kNonTlsPort:
+    case TunnelReasonTag::kClientSentEarly:
     case TunnelReasonTag::kNone: break;
   }
   logInfo("tunnel open conn=" + std::to_string(connection_id_) + " host=" + host_ + ":" + std::to_string(port_) +
