@@ -49,6 +49,14 @@ inline constexpr std::string_view kCaCommonNamePrefix = "llm-firewall local CA";
 /// without a trailing ".local". Distinguishes CAs made on different machines or days.
 [[nodiscard]] std::string caCommonName(std::string_view host, std::chrono::sys_days created);
 
+/// Refuses a certificate that is not an llm-firewall CA as generateConstrainedCa makes
+/// it with the default CaSpec: CN starting with kCaCommonNamePrefix, self-signed,
+/// basicConstraints critical CA:TRUE pathlen:0, and critical nameConstraints that
+/// permit exactly claude.ai and anthropic.com and exclude every IP address. Run before
+/// trusting ca.pem, because whoever can write that file could otherwise get any CA
+/// trusted. @throws std::invalid_argument naming the first check that failed.
+void checkTrustableCa(X509& cert);
+
 /// PEM of the certificate only, never the key. Used for <certs>/ca.pem and Keychain import.
 /// @throws std::invalid_argument if ca.cert is null. @throws std::runtime_error on an OpenSSL failure.
 [[nodiscard]] std::string caCertificatePem(const EphemeralCa& ca);

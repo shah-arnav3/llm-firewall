@@ -97,6 +97,7 @@ target_compile_definitions(llmfw-proxy PRIVATE LLMFW_VERSION="${PROJECT_VERSION}
 # Setup library
 add_library(llmfw_setup_core STATIC
   src/setup_ca.cpp
+  src/setup_keychain.cpp
   src/setup_leaf.cpp
   src/setup_paths.cpp
   src/setup_profile.cpp
@@ -131,6 +132,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_random_id.cpp
     tests/test_pac.cpp
     tests/test_setup_ca.cpp
+    tests/test_setup_keychain.cpp
     tests/test_setup_leaf.cpp
     tests/test_setup_paths.cpp
     tests/test_setup_profile.cpp
@@ -165,7 +167,11 @@ if (LLMFW_BUILD_TESTS)
   set_tests_properties(llmfw-setup.version PROPERTIES PASS_REGULAR_EXPRESSION "^llmfw-setup ${PROJECT_VERSION}")
   add_test(NAME llmfw-setup.bad-command COMMAND llmfw-setup nope)
   add_test(NAME llmfw-setup.missing-config COMMAND llmfw-setup profile --config /nonexistent/llm-firewall.yaml)
+  # trust and untrust change the real Keychain, so only their refusals are tested.
+  add_test(NAME llmfw-setup.trust-missing-config COMMAND llmfw-setup trust --config /nonexistent/llm-firewall.yaml)
+  add_test(NAME llmfw-setup.untrust-bad-argument COMMAND llmfw-setup untrust --all)
   set_tests_properties(llmfw-setup.bad-command llmfw-setup.missing-config
+                       llmfw-setup.trust-missing-config llmfw-setup.untrust-bad-argument
     PROPERTIES WILL_FAIL TRUE ENVIRONMENT "HOME=${LLMFW_FAKE_HOME}")
   set(LLMFW_FAKE_PROFILE ${CMAKE_CURRENT_BINARY_DIR}/test-profile.mobileconfig)
   add_test(NAME llmfw-setup.profile

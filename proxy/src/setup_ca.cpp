@@ -1,10 +1,13 @@
 #include "llmfw/setup_ca.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <stdexcept>
+#include <utility>
 
 #include <openssl/ec.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509v3.h>
@@ -42,6 +45,71 @@ std::string nameConstraintsValue(const std::vector<std::string>& permitted_dns) 
   }
   value += ",excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::";
   return value;
+}
+
+std::string asString(const ASN1_STRING* value) {
+  return {reinterpret_cast<const char*>(ASN1_STRING_get0_data(value)), static_cast<std::size_t>(ASN1_STRING_length(value))};
+}
+
+std::string commonName(const X509& cert) {
+  const X509_NAME* subject = X509_get_subject_name(&cert);
+  const int index = X509_NAME_get_index_by_NID(subject, NID_commonName, -1);
+  return index < 0 ? std::string() : asString(X509_NAME_ENTRY_get_data(X509_NAME_get_entry(subject, index)));
+}
+
+/// The subtrees as (type, value), where value is the DNS name or the raw IP address and mask.
+std::vector<std::pair<int, std::string>> subtrees(const STACK_OF(GENERAL_SUBTREE) * list) {
+  std::vector<std::pair<int, std::string>> out;
+  for (int i = 0; i < sk_GENERAL_SUBTREE_num(list); ++i) {
+    const GENERAL_NAME* name = sk_GENERAL_SUBTREE_value(list, i)->base;
+    if (name->type == GEN_DNS) {
+      out.emplace_back(GEN_DNS, asString(name->d.dNSName));
+    } else if (name->type == GEN_IPADD) {
+      out.emplace_back(GEN_IPADD, asString(name->d.iPAddress));
+    } else {
+      out.emplace_back(name->type, std::string());
+    }
+  }
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+void checkBasicConstraints(const X509& cert) {
+  int critical = 0;
+  auto* bc = static_cast<BASIC_CONSTRAINTS*>(X509_get_ext_d2i(&cert, NID_basic_constraints, &critical, nullptr));
+  const bool ok = bc != nullptr && critical == 1 && bc->ca != 0 && bc->pathlen != nullptr &&
+                  ASN1_INTEGER_get(bc->pathlen) == 0;
+  BASIC_CONSTRAINTS_free(bc);
+  if (!ok) {
+    throw std::invalid_argument("the certificate is not a CA with critical basicConstraints pathlen:0");
+  }
+}
+
+void checkNameConstraints(const X509& cert) {
+  int critical = 0;
+  auto* nc = static_cast<NAME_CONSTRAINTS*>(X509_get_ext_d2i(&cert, NID_name_constraints, &critical, nullptr));
+  if (nc == nullptr || critical != 1) {
+    NAME_CONSTRAINTS_free(nc);
+    throw std::invalid_argument("the certificate has no critical Name Constraints");
+  }
+  const std::vector<std::pair<int, std::string>> permitted = subtrees(nc->permittedSubtrees);
+  const std::vector<std::pair<int, std::string>> excluded = subtrees(nc->excludedSubtrees);
+  NAME_CONSTRAINTS_free(nc);
+
+  std::vector<std::pair<int, std::string>> expected_permitted;
+  for (const std::string& name : CaSpec{}.permitted_dns) {
+    expected_permitted.emplace_back(GEN_DNS, name);
+  }
+  std::sort(expected_permitted.begin(), expected_permitted.end());
+  if (permitted != expected_permitted) {
+    throw std::invalid_argument("the certificate's Name Constraints do not permit exactly claude.ai and anthropic.com");
+  }
+  // Address followed by mask, all zeros: every IPv4 and every IPv6 address.
+  const std::vector<std::pair<int, std::string>> expected_excluded{{GEN_IPADD, std::string(8, '\0')},
+                                                                   {GEN_IPADD, std::string(32, '\0')}};
+  if (excluded != expected_excluded) {
+    throw std::invalid_argument("the certificate's Name Constraints do not exclude every IP address");
+  }
 }
 
 }  // namespace
@@ -100,6 +168,20 @@ std::string caCommonName(std::string_view host, std::chrono::sys_days created) {
 }
 
 void destroyCaKey(EphemeralCa& ca) noexcept { ca.key.reset(); }
+
+void checkTrustableCa(X509& cert) {
+  if (!commonName(cert).starts_with(kCaCommonNamePrefix)) {
+    throw std::invalid_argument("the certificate's common name does not start with \"" +
+                                std::string(kCaCommonNamePrefix) + "\"");
+  }
+  EVP_PKEY* key = X509_get0_pubkey(&cert);
+  if (X509_check_issued(&cert, &cert) != X509_V_OK || key == nullptr || X509_verify(&cert, key) != 1) {
+    ERR_clear_error();
+    throw std::invalid_argument("the certificate is not self-signed");
+  }
+  checkBasicConstraints(cert);
+  checkNameConstraints(cert);
+}
 
 std::string caCertificatePem(const EphemeralCa& ca) {
   if (!ca.cert) {

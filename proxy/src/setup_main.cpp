@@ -8,10 +8,19 @@
 //       Creates the name-constrained local CA and the leaf certificate in the
 //       configured certs directory, then destroys the CA key. It changes nothing in
 //       the Keychain. Existing certificate files are replaced only with --force.
+//   llmfw-setup trust [--config <path>]
+//       Checks that <certs>/ca.pem is a name-constrained llm-firewall CA, adds it to the
+//       login keychain and trusts it for SSL in the user trust domain with Apple's
+//       `security` tool (macOS asks to confirm), then checks that macOS trusts the leaf
+//       for claude.ai.
+//   llmfw-setup untrust
+//       Removes the trust settings and the certificate of every llm-firewall CA in the
+//       keychain (macOS asks to confirm each).
 //   llmfw-setup --help | --version
 //
-// Exit codes: 0 ok; 1 usage; 2 preflight failed (bad config, or certificates exist
-// without --force); 4 other failure.
+// Exit codes: 0 ok; 1 usage; 2 preflight failed (bad config, certificates exist
+// without --force, or ca.pem missing or not an llm-firewall CA); 4 other failure,
+// including a cancelled macOS prompt.
 
 #include <chrono>
 #include <cstdio>
@@ -21,17 +30,24 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #include <unistd.h>
 
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+
 #include "llmfw/config.hpp"
 #include "llmfw/fs_util.hpp"
+#include "llmfw/openssl_ptr.hpp"
 #include "llmfw/pac.hpp"
 #include "llmfw/random_id.hpp"
 #include "llmfw/setup_ca.hpp"
+#include "llmfw/setup_keychain.hpp"
 #include "llmfw/setup_leaf.hpp"
 #include "llmfw/setup_paths.hpp"
 #include "llmfw/setup_profile.hpp"
+#include "llmfw/trust_verifier.hpp"
 
 namespace {
 
@@ -40,6 +56,8 @@ enum SetupExit : int { kExitOk = 0, kExitUsage = 1, kExitPreflight = 2, kExitFai
 constexpr std::string_view kUsage =
     "usage: llmfw-setup profile [--config <path>] [--output <path>] [--scope user|system]\n"
     "       llmfw-setup certs [--config <path>] [--force]\n"
+    "       llmfw-setup trust [--config <path>]\n"
+    "       llmfw-setup untrust\n"
     "       llmfw-setup --help | --version\n";
 
 int usage() {
@@ -152,6 +170,96 @@ int certs(int argc, char** argv) {
   return kExitOk;
 }
 
+/// The certificate in a PEM file, or null if the file cannot be read or holds none.
+llmfw::X509Ptr readPemCertificate(const std::filesystem::path& path) {
+  const llmfw::BioPtr bio(BIO_new_file(path.c_str(), "r"));
+  return llmfw::X509Ptr(bio ? PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr) : nullptr);
+}
+
+int trust(int argc, char** argv) {
+  namespace setup = llmfw::setup;
+  namespace fs = std::filesystem;
+  const setup::InstallPaths paths = setup::InstallPaths::forCurrentUser();
+  std::optional<fs::path> config_path;
+  for (int i = 2; i < argc; ++i) {
+    if (std::string_view(argv[i]) == "--config" && i + 1 < argc) {
+      config_path = argv[++i];
+    } else {
+      return usage();
+    }
+  }
+
+  llmfw::ProxyConfig config;
+  try {
+    config = llmfw::loadProxyConfig(config_path ? *config_path : paths.config_file);
+  } catch (const llmfw::ConfigError& e) {
+    error(std::string("configuration: ") + e.what());
+    return kExitPreflight;
+  }
+  const fs::path ca_path = config.certs.dir / config.certs.ca_cert_file;
+  const fs::path leaf_path = config.certs.dir / config.certs.leaf_cert_file;
+  const llmfw::X509Ptr ca = readPemCertificate(ca_path);
+  const llmfw::X509Ptr leaf = readPemCertificate(leaf_path);
+  if (!ca || !leaf) {
+    error("cannot read " + (ca ? leaf_path : ca_path).string() + "; run llmfw-setup certs first");
+    return kExitPreflight;
+  }
+  try {
+    setup::checkTrustableCa(*ca);
+  } catch (const std::invalid_argument& e) {
+    error(ca_path.string() + " will not be trusted: " + e.what());
+    return kExitPreflight;
+  }
+
+  const std::string fingerprint = setup::sha256Fingerprint(*ca);
+  setup::KeychainTrust keychain;
+  std::puts("macOS will ask you to confirm the trust change.");
+  keychain.trustCa(ca_path);
+  std::printf("Trusted %s for SSL in your login keychain.\n", ca_path.c_str());
+  std::printf("  SHA-256 fingerprint: %s\n", fingerprint.c_str());
+
+  // The macOS trust evaluation the proxy uses for origins, given the leaf and the
+  // CA as a TLS client would see them: it succeeds only if the CA's trust is in effect.
+  // macOS does not look up the issuer in the keychain, so the CA must be in the chain.
+  STACK_OF(X509)* chain = sk_X509_new_null();
+  sk_X509_push(chain, leaf.get());
+  sk_X509_push(chain, ca.get());
+  const llmfw::VerifyResult verdict = llmfw::SystemTrustVerifier().verify(chain, "claude.ai");
+  sk_X509_free(chain);
+  if (!verdict.ok) {
+    error("macOS still does not trust " + leaf_path.string() + " for claude.ai: " + verdict.reason);
+    return kExitFailure;
+  }
+  std::puts("macOS now trusts the leaf certificate for claude.ai.");
+
+  for (const setup::InstalledCa& other : keychain.findInstalled()) {
+    if (other.sha256_fingerprint != fingerprint) {
+      std::printf("Another llm-firewall CA is still in the keychain: %s (%s)\n", other.common_name.c_str(),
+                  other.sha256_fingerprint.c_str());
+    }
+  }
+  std::puts("To undo: llmfw-setup untrust");
+  return kExitOk;
+}
+
+int untrust(int argc, char** /*argv*/) {
+  if (argc != 2) {
+    return usage();
+  }
+  llmfw::setup::KeychainTrust keychain;
+  const std::vector<llmfw::setup::InstalledCa> installed = keychain.findInstalled();
+  if (installed.empty()) {
+    std::puts("No llm-firewall CA is in the keychain.");
+    return kExitOk;
+  }
+  std::puts("macOS will ask you to confirm each trust change.");
+  for (const llmfw::setup::InstalledCa& ca : installed) {
+    keychain.untrustCa(ca.sha256_fingerprint);
+    std::printf("Removed %s (%s)\n", ca.common_name.c_str(), ca.sha256_fingerprint.c_str());
+  }
+  return kExitOk;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -167,11 +275,20 @@ int main(int argc, char** argv) {
     std::puts("llmfw-setup " LLMFW_VERSION);
     return kExitOk;
   }
-  if (command != "profile" && command != "certs") {
-    return usage();
-  }
   try {
-    return command == "profile" ? profile(argc, argv) : certs(argc, argv);
+    if (command == "profile") {
+      return profile(argc, argv);
+    }
+    if (command == "certs") {
+      return certs(argc, argv);
+    }
+    if (command == "trust") {
+      return trust(argc, argv);
+    }
+    if (command == "untrust") {
+      return untrust(argc, argv);
+    }
+    return usage();
   } catch (const std::exception& e) {
     error(e.what());
     return kExitFailure;

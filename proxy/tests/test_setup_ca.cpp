@@ -9,6 +9,8 @@
 #include <openssl/x509v3.h>
 
 #include "llmfw/setup_ca.hpp"
+#include "llmfw/setup_leaf.hpp"
+#include "llmfw/setup_x509.hpp"
 
 namespace llmfw::setup {
 namespace {
@@ -181,6 +183,84 @@ TEST(SetupCa, CommonNameNamesTheMachineAndDate) {
   EXPECT_EQ(caCommonName("arnavs-mac.local", day), "llm-firewall local CA (arnavs-mac 2026-10-07)");
   EXPECT_EQ(caCommonName("build-host", day), "llm-firewall local CA (build-host 2026-10-07)");
   EXPECT_TRUE(caCommonName("h", day).starts_with(kCaCommonNamePrefix));
+}
+
+/// A certificate whose issuer is its own subject, with the given CN and extensions
+/// (nid, OpenSSL config value), signed by its own key or by `signer` if given.
+X509Ptr handMadeCa(const std::string& cn, const std::vector<std::pair<int, std::string>>& extensions,
+                   EVP_PKEY* signer = nullptr) {
+  const EvpPkeyPtr key(EVP_EC_gen("P-256"));
+  X509Ptr cert(X509_new());
+  X509_set_version(cert.get(), X509_VERSION_3);
+  setRandomSerial(*cert);
+  setValidity(*cert, std::chrono::days{30});
+  X509_NAME* name = X509_get_subject_name(cert.get());
+  X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_UTF8, reinterpret_cast<const unsigned char*>(cn.c_str()), -1, -1,
+                             0);
+  X509_set_issuer_name(cert.get(), name);
+  X509_set_pubkey(cert.get(), key.get());
+  for (const auto& [nid, value] : extensions) {
+    addExtension(*cert, *cert, nid, value);
+  }
+  X509_sign(cert.get(), signer != nullptr ? signer : key.get(), EVP_sha256());
+  return cert;
+}
+
+const std::pair<int, std::string> kCaBasics{NID_basic_constraints, "critical,CA:TRUE,pathlen:0"};
+const std::pair<int, std::string> kOurConstraints{
+    NID_name_constraints,
+    "critical,permitted;DNS:claude.ai,permitted;DNS:anthropic.com,excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"};
+
+TEST(SetupCa, TrustableCaAcceptsGeneratedCa) {
+  EphemeralCa ca = generateConstrainedCa(testSpec());
+  destroyCaKey(ca);
+  EXPECT_NO_THROW(checkTrustableCa(*ca.cert));
+  EXPECT_NO_THROW(checkTrustableCa(*handMadeCa("llm-firewall local CA (hand)", {kCaBasics, kOurConstraints})));
+}
+
+TEST(SetupCa, TrustableCaRejectsOtherNames) {
+  EXPECT_THROW(checkTrustableCa(*handMadeCa("Some other CA", {kCaBasics, kOurConstraints})), std::invalid_argument);
+}
+
+TEST(SetupCa, TrustableCaRejectsMissingOrWeakerNameConstraints) {
+  const std::string cn = "llm-firewall local CA (hand)";
+  const std::vector<std::vector<std::pair<int, std::string>>> weaker{
+      {kCaBasics},
+      {kCaBasics, {NID_name_constraints, "permitted;DNS:claude.ai,permitted;DNS:anthropic.com,"
+                                         "excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"}},
+      {kCaBasics, {NID_name_constraints, "critical,permitted;DNS:claude.ai,permitted;DNS:anthropic.com"}},
+      {kCaBasics, {NID_name_constraints, "critical,permitted;DNS:claude.ai,permitted;DNS:anthropic.com,"
+                                         "excluded;IP:0.0.0.0/0.0.0.0"}},
+      {kCaBasics, {NID_name_constraints, "critical,permitted;DNS:claude.ai,permitted;DNS:anthropic.com,"
+                                         "permitted;DNS:example.com,excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"}},
+      {kCaBasics, {NID_name_constraints, "critical,permitted;DNS:claude.ai,"
+                                         "excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"}},
+      {kCaBasics, {NID_name_constraints, "critical,permitted;DNS:claude.ai,permitted;DNS:anthropic.com,"
+                                         "permitted;IP:10.0.0.0/255.0.0.0,excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"}},
+  };
+  for (std::size_t i = 0; i < weaker.size(); ++i) {
+    EXPECT_THROW(checkTrustableCa(*handMadeCa(cn, weaker[i])), std::invalid_argument) << "case " << i;
+  }
+}
+
+TEST(SetupCa, TrustableCaRejectsWrongBasicConstraints) {
+  const std::string cn = "llm-firewall local CA (hand)";
+  for (const std::string& basics : {"critical,CA:TRUE", "CA:TRUE,pathlen:0", "critical,CA:TRUE,pathlen:1",
+                                    "critical,CA:FALSE"}) {
+    EXPECT_THROW(checkTrustableCa(*handMadeCa(cn, {{NID_basic_constraints, basics}, kOurConstraints})),
+                 std::invalid_argument)
+        << basics;
+  }
+  EXPECT_THROW(checkTrustableCa(*handMadeCa(cn, {kOurConstraints})), std::invalid_argument);
+}
+
+TEST(SetupCa, TrustableCaRejectsCertificatesNotSelfSigned) {
+  const EphemeralCa ca = generateConstrainedCa(testSpec());
+  EXPECT_THROW(checkTrustableCa(*handMadeCa("llm-firewall local CA (hand)", {kCaBasics, kOurConstraints},
+                                            ca.key.get())),
+               std::invalid_argument);
+  const IssuedLeaf leaf = issueLeaf(ca, LeafSpec{});
+  EXPECT_THROW(checkTrustableCa(*leaf.cert), std::invalid_argument);
 }
 
 }  // namespace

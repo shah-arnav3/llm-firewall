@@ -117,7 +117,7 @@ Anthropic hosts to the proxy.
 | Path | What | How it is routed | How TLS is trusted | Coverage |
 |---|---|---|---|---|
 | **(a) App** | The claude.ai UI and the app's own requests (Electron/Chromium) | The app fetches the PAC at launch and evaluates it per request | The local CA in the login Keychain | Confirmed: `claude.ai`, `api.anthropic.com`, `assets-proxy.anthropic.com`, `s-cdn.anthropic.com` |
-| **(b) Claude Code engine** | The agent behind Chat, Cowork and Code | The app hands it the one proxy the PAC returns for the inference endpoint, as `HTTPS_PROXY`/`HTTP_PROXY` with a loopback `NO_PROXY` | Not settled: the app makes the engine trust the System keychain; `NODE_EXTRA_CA_CERTS` is the documented fallback | Confirmed for Code sessions: `api.anthropic.com`, plus Datadog telemetry |
+| **(b) Claude Code engine** | The agent behind Chat, Cowork and Code | The app hands it the one proxy the PAC returns for the inference endpoint, as `HTTPS_PROXY`/`HTTP_PROXY` with a loopback `NO_PROXY` | Not settled: the engine (Bun) trusts its bundled roots plus the macOS keychains, user trust settings included, so the login Keychain should be enough; `NODE_EXTRA_CA_CERTS` is the documented fallback | Confirmed for Code sessions: `api.anthropic.com`, plus Datadog telemetry |
 | **(c) Cowork VM** | Commands the agent runs in Cowork's sandbox | The VM is given its own copy of the PAC when it starts and evaluates it per request, reaching the host's loopback through an alias | Its own trust store: open question | **Not verified**: needs an account with Cowork |
 
 `HTTPS_PROXY` has no per-host rules, so path (b) sends **all** its HTTPS traffic to the
@@ -206,7 +206,7 @@ Step by step:
   so this CA cannot vouch for any other site even if it were misused.
 - It issues **one leaf certificate** with exactly four names: `claude.ai`,
   `*.claude.ai`, `anthropic.com` and `*.anthropic.com` (ECDSA P-256, 397 days).
-- It trusts the CA in your **login Keychain** (user trust domain only). macOS asks you to confirm.
+- It trusts the CA in your **login Keychain**, for SSL only and in the user trust domain only. macOS asks you to confirm.
 - It then **destroys the CA private key**. The key only ever existed in memory and
   was never written to disk. **No signing key remains on the machine.** The proxy can
   only present the leaf it was given, and it cannot mint certificates for anything else.
@@ -442,8 +442,9 @@ record per connection and never records content. By default it blind-tunnels eve
 CONNECT. With `proxy.decrypt: true` it decrypts the scoped hosts its leaf certificate
 covers and relays them byte for byte (HTTP is not parsed yet).
 `llmfw-setup profile` writes the configuration profile that points Claude at it, and
-`llmfw-setup certs` creates the certificates that decryption will use. Keychain trust,
-installing (LaunchAgents) and the collector are not built yet.
+`llmfw-setup certs` creates the certificates that decryption will use, and
+`llmfw-setup trust` trusts the CA in the login Keychain. Installing (LaunchAgents) and
+the collector are not built yet.
 
 Prerequisites (macOS, Apple Clang 15 or newer, C++20):
 
@@ -506,6 +507,23 @@ before the command exits. It prints the CA's SHA-256 fingerprint. It changes not
 the Keychain, so no client trusts the CA yet. The proxy loads these files only when
 `proxy.decrypt` is true. If the files exist it refuses (exit 2); `--force` replaces them.
 
+### Trusting the CA
+
+```sh
+proxy/build/llmfw-setup trust --config config/llm-firewall.yaml
+```
+
+This first checks that `ca.pem` is an llm-firewall CA with the Name Constraints above,
+and refuses any other certificate (exit 2), because whoever can write that file could
+otherwise get any CA trusted. It then runs Apple's `security add-trusted-cert`, which
+adds the CA to the login Keychain and trusts it for SSL in the user trust domain. macOS
+asks you to confirm; no `sudo` is needed.
+Finally it asks macOS whether the leaf is now trusted for `claude.ai`, and fails
+(exit 4) if not. It also lists any older llm-firewall CA still in the Keychain.
+
+`proxy/build/llmfw-setup untrust` removes the trust setting and the certificate of
+every llm-firewall CA in the Keychain, with a macOS prompt for each.
+
 ### Trying decryption without changing the Keychain
 
 Set `decrypt: true` under `proxy:` in a copy of the config, start the proxy with it, and
@@ -521,7 +539,8 @@ curl -x http://127.0.0.1:18443 \
 `curl -v` shows the issuer `llm-firewall local CA (…)`, the response is the real one
 (401 without an API key), and the metadata log gets a `"kind":"decrypted"` record with
 the byte counts, ALPN and timings. Hosts outside `scope.decrypt_hosts` are still
-blind-tunneled. Do not point Claude at a decrypting proxy until the CA is trusted:
+blind-tunneled. Do not point Claude at a decrypting proxy until the CA is trusted
+([Trusting the CA](#trusting-the-ca)):
 Claude would reject the certificate, and the client TLS breaker would then tunnel the
 host for `client_tls_breaker_cooldown_ms`.
 
