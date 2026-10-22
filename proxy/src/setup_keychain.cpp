@@ -9,7 +9,9 @@
 #include <utility>
 #include <vector>
 
+#include <pwd.h>
 #include <spawn.h>
+#include <unistd.h>
 #include <sys/wait.h>
 
 #include <CoreFoundation/CoreFoundation.h>
@@ -170,7 +172,16 @@ void run(const std::filesystem::path& tool, const std::vector<std::string>& args
 
 }  // namespace
 
-KeychainTrust::KeychainTrust(std::filesystem::path security_tool) : security_tool_(std::move(security_tool)) {}
+KeychainTrust::KeychainTrust(std::filesystem::path security_tool, std::filesystem::path keychain)
+    : security_tool_(std::move(security_tool)), keychain_(std::move(keychain)) {}
+
+std::filesystem::path KeychainTrust::loginKeychain() {
+  const passwd* entry = ::getpwuid(::getuid());
+  if (entry == nullptr || entry->pw_dir == nullptr) {
+    throw std::runtime_error("cannot find the home directory of the current user");
+  }
+  return std::filesystem::path(entry->pw_dir) / "Library/Keychains/login.keychain-db";
+}
 
 void KeychainTrust::trustCa(const std::filesystem::path& certificate_file) {
   const BioPtr bio(BIO_new_file(certificate_file.c_str(), "r"));
@@ -182,7 +193,11 @@ void KeychainTrust::trustCa(const std::filesystem::path& certificate_file) {
   const std::string fingerprint = sha256Fingerprint(*cert);
   const bool was_present = countCopies(fingerprint) > 0;
   try {
-    run(security_tool_, {"add-trusted-cert", "-r", "trustRoot", "-p", "ssl", certificate_file.string()});
+    run(security_tool_,
+        {"add-trusted-cert", "-r", "trustRoot", "-p", "ssl", "-k", keychain_.string(), certificate_file.string()});
+    if (countCopies(fingerprint) == 0) {
+      throw std::runtime_error("the CA was trusted but is not in any keychain (" + keychain_.string() + ")");
+    }
   } catch (const std::runtime_error&) {
     // The tool adds the certificate before it asks for trust, so a refusal would
     // leave an untrusted copy behind.

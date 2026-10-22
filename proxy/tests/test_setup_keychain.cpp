@@ -59,11 +59,19 @@ class FakeSecurityTool {
   fs::path dir_;
 };
 
-TEST(SetupKeychain, TrustRunsAddTrustedCertAsSslRoot) {
+TEST(SetupKeychain, TrustRunsAddTrustedCertAsSslRootIntoTheKeychain) {
   const FakeSecurityTool fake(0);
   const fs::path ca = fake.writeCa();
-  KeychainTrust(fake.tool()).trustCa(ca);
-  EXPECT_EQ(fake.calls(), std::vector<std::string>{"add-trusted-cert -r trustRoot -p ssl " + ca.string()});
+  // The fake adds nothing, so the CA is missing from every keychain afterwards.
+  EXPECT_THROW(KeychainTrust(fake.tool(), "/k/login.keychain-db").trustCa(ca), std::runtime_error);
+  EXPECT_EQ(fake.calls(),
+            std::vector<std::string>{"add-trusted-cert -r trustRoot -p ssl -k /k/login.keychain-db " + ca.string()});
+}
+
+TEST(SetupKeychain, LoginKeychainIsInTheUsersHome) {
+  const fs::path keychain = KeychainTrust::loginKeychain();
+  EXPECT_EQ(keychain.filename(), "login.keychain-db");
+  EXPECT_EQ(keychain.parent_path().filename(), "Keychains");
 }
 
 TEST(SetupKeychain, TrustReportsAToolFailure) {
