@@ -18,6 +18,7 @@ find_package(Boost 1.83 REQUIRED CONFIG COMPONENTS headers)  # Asio is header-on
 find_package(OpenSSL 3.0 REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
+find_package(llhttp CONFIG REQUIRED)
 
 add_library(llmfw_flags INTERFACE)
 target_compile_options(llmfw_flags INTERFACE
@@ -71,6 +72,7 @@ add_library(llmfw_core STATIC
   src/decrypted_relay.cpp
   src/fs_util.cpp
   src/host_scope.cpp
+  src/http1_parser.cpp
   src/listener.cpp
   src/log.cpp
   src/metadata_logger.cpp
@@ -88,7 +90,7 @@ target_include_directories(llmfw_core
 target_link_libraries(llmfw_core
   PUBLIC  llmfw_flags llmfw_proto Boost::headers OpenSSL::SSL OpenSSL::Crypto
           "$<LINK_LIBRARY:FRAMEWORK,Security>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>"
-  PRIVATE yaml-cpp::yaml-cpp)
+  PRIVATE yaml-cpp::yaml-cpp llhttp::llhttp)
 
 add_executable(llmfw-proxy src/proxy_main.cpp)
 target_link_libraries(llmfw-proxy PRIVATE llmfw_core)
@@ -126,6 +128,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_decrypted_relay.cpp
     tests/test_decrypt_path.cpp
     tests/test_host_scope.cpp
+    tests/test_http1_parser.cpp
     tests/test_metadata_logger.cpp
     tests/test_openssl_ptr.cpp
     tests/test_proxy_app.cpp

@@ -449,8 +449,8 @@ the collector are not built yet.
 Prerequisites (macOS, Apple Clang 15 or newer, C++20):
 
 ```sh
-brew install cmake ninja boost openssl@3 yaml-cpp protobuf googletest
-# tested with CMake 4.4, Ninja 1.13, Boost 1.92, OpenSSL 3.6, yaml-cpp 0.9, protobuf 36.2, GoogleTest 1.18
+brew install cmake ninja boost openssl@3 yaml-cpp protobuf llhttp googletest
+# tested with CMake 4.4, Ninja 1.13, Boost 1.92, OpenSSL 3.6, yaml-cpp 0.9, protobuf 36.2, llhttp 9.4, GoogleTest 1.18
 ```
 
 Build and run the tests:
