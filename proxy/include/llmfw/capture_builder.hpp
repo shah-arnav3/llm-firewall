@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -75,12 +76,15 @@ struct ExchangeConnection {
 };
 
 /// Builds one Capture{http} from a request and its response as they are parsed.
-/// Call the setters in wire order: request head, request complete, response head,
-/// response complete; any may be missing when the exchange ends early. finish() may be called at any point, once.
+/// Call the setters in wire order: request head, request body, request complete,
+/// response head, response body, response complete; any may be missing when the
+/// exchange ends early. finish() may be called at any point, once.
 ///
 /// What it keeps:
 ///   - Headers in wire order. Values of capture.redact_headers (any case) are
 ///     removed, keeping only the name and the original value length.
+///   - Bodies as de-chunked bytes up to the capture.*_body_cap_bytes cap, still
+///     content-encoded; in metadata_only mode only their sizes (Body.omitted).
 ///   - The client: the request's User-Agent if it has one, otherwise the CONNECT's,
 ///     classified by the rules; if that is UNKNOWN, by the CONNECT User-Agent.
 ///   - Timings relative to the request's first byte. The connection's
@@ -88,14 +92,16 @@ struct ExchangeConnection {
 class ExchangeCaptureBuilder {
  public:
   /// The references must outlive the builder. `started` is when the request's first byte was read.
-  ExchangeCaptureBuilder(const CaptureBuildContext& ctx, const CaptureConfig& cfg,
+  ExchangeCaptureBuilder(const CaptureBuildContext& ctx, const CaptureConfig& cfg, CaptureMode mode,
                          const ExchangeConnection& connection, std::uint32_t exchange_index, Clock::time_point started,
                          std::int64_t started_unix_us);
 
   void setRequestHead(const Http1Head& head);
+  void appendRequestBody(std::span<const std::uint8_t> bytes);
   void markRequestComplete(Clock::time_point at);
   /// `at` is when the response's first byte was read.
   void setResponseHead(const Http1Head& head, Clock::time_point at);
+  void appendResponseBody(std::span<const std::uint8_t> bytes);
   void markResponseComplete(Clock::time_point at);
 
   /// Whether setRequestHead was called with a HEAD request.
@@ -105,10 +111,12 @@ class ExchangeCaptureBuilder {
   [[nodiscard]] std::unique_ptr<llmfw::v1::Frame> finish(ExchangeOutcomeTag outcome);
 
  private:
+  void appendBody(llmfw::v1::Body& body, std::span<const std::uint8_t> bytes, std::size_t cap);
   [[nodiscard]] std::uint64_t sinceStart(Clock::time_point at) const;
 
   const CaptureBuildContext& ctx_;
   const CaptureConfig& cfg_;
+  CaptureMode mode_;
   const ExchangeConnection& connection_;
   Clock::time_point started_;
   std::unique_ptr<llmfw::v1::Frame> frame_;

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -193,6 +194,10 @@ Http1Head responseHead() {
   return head;
 }
 
+std::span<const std::uint8_t> bytesOf(std::string_view text) {
+  return {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()};
+}
+
 struct ExchangeFixture {
   ClientClassifier classifier = desktopClassifier();
   ProxyCounters counters;
@@ -201,17 +206,19 @@ struct ExchangeFixture {
   ExchangeConnection connection = sampleConnection();
   Clock::time_point t0 = Clock::now();
 
-  ExchangeCaptureBuilder builder(std::uint32_t index = 0) {
-    return {ctx, cfg, connection, index, t0, 1'790'000'000'000'000};
+  ExchangeCaptureBuilder builder(CaptureMode mode, std::uint32_t index = 0) {
+    return {ctx, cfg, mode, connection, index, t0, 1'790'000'000'000'000};
   }
 };
 
 TEST(ExchangeCaptureBuilder, BuildsACompleteExchange) {
   ExchangeFixture f;
-  ExchangeCaptureBuilder b = f.builder();
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kMetadataOnly);
   b.setRequestHead(requestHead());
+  b.appendRequestBody(bytesOf("{\"a\":1}"));
   b.markRequestComplete(f.t0 + std::chrono::milliseconds(1));
   b.setResponseHead(responseHead(), f.t0 + std::chrono::milliseconds(300));
+  b.appendResponseBody(bytesOf("data: x\n\n"));
   b.markResponseComplete(f.t0 + std::chrono::milliseconds(900));
   const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
 
@@ -244,7 +251,7 @@ TEST(ExchangeCaptureBuilder, BuildsACompleteExchange) {
 TEST(ExchangeCaptureBuilder, RedactsConfiguredHeadersIgnoringCase) {
   ExchangeFixture f;
   f.cfg.redact_headers.push_back("set-cookie");
-  ExchangeCaptureBuilder b = f.builder();
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kFull);
   b.setRequestHead(requestHead());
   b.setResponseHead(responseHead(), f.t0);
   const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
@@ -258,10 +265,46 @@ TEST(ExchangeCaptureBuilder, RedactsConfiguredHeadersIgnoringCase) {
   EXPECT_EQ(frame->SerializeAsString().find("sk-secret"), std::string::npos);
 }
 
+TEST(ExchangeCaptureBuilder, MetadataOnlyKeepsBodySizesButNoBytes) {
+  ExchangeFixture f;
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kMetadataOnly);
+  b.setRequestHead(requestHead());
+  b.appendRequestBody(bytesOf("secret-prompt"));
+  b.setResponseHead(responseHead(), f.t0);
+  b.appendResponseBody(bytesOf("secret-reply"));
+  const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
+  const llmfw::v1::HttpExchange& http = frame->capture().http();
+  EXPECT_TRUE(http.request().body().omitted());
+  EXPECT_EQ(http.request().body().total_bytes(), 13u);
+  EXPECT_EQ(http.request().body().data(), "");
+  EXPECT_TRUE(http.response().body().omitted());
+  EXPECT_EQ(http.response().body().total_bytes(), 12u);
+  EXPECT_EQ(frame->SerializeAsString().find("secret-"), std::string::npos);
+}
+
+TEST(ExchangeCaptureBuilder, FullModeCapsBodies) {
+  ExchangeFixture f;
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kFull);
+  b.setRequestHead(requestHead());
+  b.appendRequestBody(bytesOf("ab"));
+  b.appendRequestBody(bytesOf("cdef"));
+  b.setResponseHead(responseHead(), f.t0);
+  b.appendResponseBody(bytesOf("12345678"));
+  const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
+  const llmfw::v1::Body& request = frame->capture().http().request().body();
+  EXPECT_FALSE(request.omitted());
+  EXPECT_EQ(request.data(), "abcd");
+  EXPECT_EQ(request.total_bytes(), 6u);
+  EXPECT_TRUE(request.truncated());
+  const llmfw::v1::Body& response = frame->capture().http().response().body();
+  EXPECT_EQ(response.data(), "12345678");
+  EXPECT_FALSE(response.truncated());
+}
+
 TEST(ExchangeCaptureBuilder, ClassifiesTheRequestUserAgent) {
   ExchangeFixture f;
   f.connection.connect_user_agent = "";
-  ExchangeCaptureBuilder b = f.builder();
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kMetadataOnly);
   b.setRequestHead(requestHead());
   const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
   EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_CLAUDE_CODE);
@@ -274,7 +317,7 @@ TEST(ExchangeCaptureBuilder, FallsBackToTheConnectUserAgent) {
   f.connection.connect_user_agent = "Mozilla/5.0 Claude/2.9 Electron/38";
   Http1Head without_agent = requestHead();
   without_agent.headers.erase(without_agent.headers.begin() + 1);
-  ExchangeCaptureBuilder b = f.builder();
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kMetadataOnly);
   b.setRequestHead(without_agent);
   auto frame = b.finish(ExchangeOutcomeTag::kComplete);
   EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_UI);
@@ -282,7 +325,7 @@ TEST(ExchangeCaptureBuilder, FallsBackToTheConnectUserAgent) {
 
   Http1Head unknown_agent = requestHead();
   unknown_agent.headers[1].second = "fetch/1.0";
-  ExchangeCaptureBuilder b2 = f.builder();
+  ExchangeCaptureBuilder b2 = f.builder(CaptureMode::kMetadataOnly);
   b2.setRequestHead(unknown_agent);
   frame = b2.finish(ExchangeOutcomeTag::kComplete);
   EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_UI);
@@ -291,7 +334,7 @@ TEST(ExchangeCaptureBuilder, FallsBackToTheConnectUserAgent) {
 
 TEST(ExchangeCaptureBuilder, ConnectionTimingsOnlyOnTheFirstExchange) {
   ExchangeFixture f;
-  ExchangeCaptureBuilder b = f.builder(3);
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kMetadataOnly, 3);
   b.setRequestHead(requestHead());
   const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
   EXPECT_EQ(frame->capture().exchange_index(), 3u);
@@ -301,7 +344,7 @@ TEST(ExchangeCaptureBuilder, ConnectionTimingsOnlyOnTheFirstExchange) {
 
 TEST(ExchangeCaptureBuilder, AnExchangeEndedEarlyHasNoResponse) {
   ExchangeFixture f;
-  ExchangeCaptureBuilder b = f.builder();
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kMetadataOnly);
   b.setRequestHead(requestHead("HEAD"));
   EXPECT_TRUE(b.isHeadRequest());
   const auto frame = b.finish(ExchangeOutcomeTag::kUpstreamAborted);
@@ -319,7 +362,7 @@ TEST(ExchangeCaptureBuilder, MapsEveryOutcome) {
       {ExchangeOutcomeTag::kUpgraded, llmfw::v1::EXCHANGE_OUTCOME_UPGRADED}};
   for (const auto& [tag, expected] : cases) {
     ExchangeFixture f;
-    EXPECT_EQ(f.builder().finish(tag)->capture().http().outcome(), expected);
+    EXPECT_EQ(f.builder(CaptureMode::kMetadataOnly).finish(tag)->capture().http().outcome(), expected);
   }
 }
 

@@ -130,11 +130,12 @@ std::unique_ptr<llmfw::v1::Frame> buildDecryptedCapture(const CaptureBuildContex
 }
 
 ExchangeCaptureBuilder::ExchangeCaptureBuilder(const CaptureBuildContext& ctx, const CaptureConfig& cfg,
-                                               const ExchangeConnection& connection,
+                                               CaptureMode mode, const ExchangeConnection& connection,
                                                std::uint32_t exchange_index, Clock::time_point started,
                                                std::int64_t started_unix_us)
     : ctx_(ctx),
       cfg_(cfg),
+      mode_(mode),
       connection_(connection),
       started_(started),
       frame_(std::make_unique<llmfw::v1::Frame>()) {
@@ -160,8 +161,14 @@ void ExchangeCaptureBuilder::setRequestHead(const Http1Head& head) {
   request.set_target(head.target);
   request.set_http_version(httpVersion(head));
   copyHeaders(head, cfg_.redact_headers, *request.mutable_headers());
+  request.mutable_body()->set_omitted(mode_ == CaptureMode::kMetadataOnly);
   request_user_agent_ = std::string(headerValue(head, "user-agent"));
   head_request_ = head.method == "HEAD";
+}
+
+void ExchangeCaptureBuilder::appendRequestBody(std::span<const std::uint8_t> bytes) {
+  appendBody(*frame_->mutable_capture()->mutable_http()->mutable_request()->mutable_body(), bytes,
+             cfg_.request_body_cap_bytes);
 }
 
 void ExchangeCaptureBuilder::markRequestComplete(Clock::time_point at) {
@@ -174,7 +181,13 @@ void ExchangeCaptureBuilder::setResponseHead(const Http1Head& head, Clock::time_
   response.set_reason(head.reason);
   response.set_http_version(httpVersion(head));
   copyHeaders(head, cfg_.redact_headers, *response.mutable_headers());
+  response.mutable_body()->set_omitted(mode_ == CaptureMode::kMetadataOnly);
   frame_->mutable_capture()->mutable_timings()->set_response_first_byte_us(sinceStart(at));
+}
+
+void ExchangeCaptureBuilder::appendResponseBody(std::span<const std::uint8_t> bytes) {
+  appendBody(*frame_->mutable_capture()->mutable_http()->mutable_response()->mutable_body(), bytes,
+             cfg_.response_body_cap_bytes);
 }
 
 void ExchangeCaptureBuilder::markResponseComplete(Clock::time_point at) {
@@ -198,6 +211,17 @@ std::unique_ptr<llmfw::v1::Frame> ExchangeCaptureBuilder::finish(ExchangeOutcome
   client.set_user_agent(user_agent);
   client.set_connect_user_agent(connection_.connect_user_agent);
   return std::move(frame_);
+}
+
+void ExchangeCaptureBuilder::appendBody(llmfw::v1::Body& body, std::span<const std::uint8_t> bytes, std::size_t cap) {
+  body.set_total_bytes(body.total_bytes() + bytes.size());
+  if (mode_ == CaptureMode::kMetadataOnly) {
+    return;
+  }
+  const std::size_t room = cap > body.data().size() ? cap - body.data().size() : 0;
+  const std::size_t kept = std::min(room, bytes.size());
+  body.mutable_data()->append(reinterpret_cast<const char*>(bytes.data()), kept);
+  body.set_truncated(body.total_bytes() > body.data().size());
 }
 
 std::uint64_t ExchangeCaptureBuilder::sinceStart(Clock::time_point at) const {
