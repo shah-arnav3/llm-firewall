@@ -72,6 +72,7 @@ add_library(llmfw_core STATIC
   src/decrypted_relay.cpp
   src/fs_util.cpp
   src/host_scope.cpp
+  src/http1_exchange_tracker.cpp
   src/http1_parser.cpp
   src/listener.cpp
   src/log.cpp
@@ -128,6 +129,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_decrypted_relay.cpp
     tests/test_decrypt_path.cpp
     tests/test_host_scope.cpp
+    tests/test_http1_exchange_tracker.cpp
     tests/test_http1_parser.cpp
     tests/test_metadata_logger.cpp
     tests/test_openssl_ptr.cpp
