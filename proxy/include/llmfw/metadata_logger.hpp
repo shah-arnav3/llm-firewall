@@ -14,13 +14,20 @@
 namespace llmfw {
 
 /// Pure conversion from a Capture to its metadata record.
-///   - Every capture: ids, kind ("tunnel", "http", "websocket", or "" if no payload),
-///     client path, timings, and the User-Agent if "user-agent" is in
+///   - Every capture: ids, kind ("tunnel", "decrypted", "http", "websocket", or "" if
+///     no payload), client path, timings, and the User-Agent if "user-agent" is in
 ///     cfg.logged_header_values.
 ///   - Tunnel: host, tunnel_reason, request_bytes / response_bytes (bytes each way)
 ///     and tunnel_duration_us.
-/// HTTP and WebSocket captures are not produced yet, so for them the record holds only
-/// the fields every capture gets. Body data is never read.
+///   - Decrypted: host, alpn, request_bytes / response_bytes (decrypted bytes each
+///     way), connection_duration_us, upstream_connect_us and client_handshake_us.
+///   - HTTP: host (the Host header, or the CONNECT host if there is none), alpn,
+///     method, path (the target without its query string), query_keys (parameter
+///     names only), status, header names, request_bytes / response_bytes (body sizes)
+///     and outcome. The request and response Content-Type values only if
+///     "content-type" is in cfg.logged_header_values.
+/// WebSocket records hold only the fields every capture gets. Body data, query values
+/// and other header values are never read.
 [[nodiscard]] llmfw::v1::MetadataRecord toMetadataRecord(const llmfw::v1::Capture& capture,
                                                          const MetadataLogConfig& cfg,
                                                          const std::string& proxy_instance_id);

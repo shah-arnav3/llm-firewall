@@ -1,6 +1,9 @@
 #include "llmfw/metadata_logger.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <string_view>
+#include <vector>
 #include <cerrno>
 #include <system_error>
 
@@ -24,6 +27,30 @@ constexpr mode_t kFileMode = 0600;
 
 std::filesystem::path rotated(const std::filesystem::path& path, unsigned n) {
   return path.string() + "." + std::to_string(n);
+}
+
+/// The parameter names of a query string, in order, without their values.
+std::vector<std::string> queryKeys(std::string_view query) {
+  std::vector<std::string> keys;
+  while (!query.empty()) {
+    const std::size_t end = query.find('&');
+    const std::string_view pair = query.substr(0, end);
+    const std::string_view key = pair.substr(0, pair.find('='));
+    if (!key.empty()) {
+      keys.emplace_back(key);
+    }
+    if (end == std::string_view::npos) {
+      break;
+    }
+    query.remove_prefix(end + 1);
+  }
+  return keys;
+}
+
+bool isContentType(const llmfw::v1::Header& header) {
+  return !header.redacted() && header.name().size() == 12 &&
+         std::equal(header.name().begin(), header.name().end(), "content-type",
+                    [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
 }
 
 }  // namespace
@@ -66,7 +93,39 @@ llmfw::v1::MetadataRecord toMetadataRecord(const llmfw::v1::Capture& capture, co
       record.set_client_handshake_us(decrypted.client_handshake_us());
       break;
     }
-    case llmfw::v1::Capture::kHttp: record.set_kind("http"); break;
+    case llmfw::v1::Capture::kHttp: {
+      const llmfw::v1::HttpExchange& http = capture.http();
+      record.set_kind("http");
+      record.set_host(http.request().host().empty() ? http.connect_host() : http.request().host());
+      record.set_alpn(http.negotiated_alpn());
+      record.set_method(http.request().method());
+      const std::string_view target = http.request().target();
+      const std::size_t query = target.find('?');
+      record.set_path(std::string(target.substr(0, query)));
+      if (query != std::string_view::npos) {
+        for (const std::string& key : queryKeys(target.substr(query + 1))) {
+          record.add_query_keys(key);
+        }
+      }
+      record.set_status(http.response().status());
+      const bool content_type_allowed = std::find(allowed.begin(), allowed.end(), "content-type") != allowed.end();
+      for (const llmfw::v1::Header& header : http.request().headers()) {
+        record.add_request_header_names(header.name());
+        if (content_type_allowed && record.request_content_type().empty() && isContentType(header)) {
+          record.set_request_content_type(header.value());
+        }
+      }
+      for (const llmfw::v1::Header& header : http.response().headers()) {
+        record.add_response_header_names(header.name());
+        if (content_type_allowed && record.response_content_type().empty() && isContentType(header)) {
+          record.set_response_content_type(header.value());
+        }
+      }
+      record.set_request_bytes(http.request().body().total_bytes());
+      record.set_response_bytes(http.response().body().total_bytes());
+      record.set_outcome(http.outcome());
+      break;
+    }
     case llmfw::v1::Capture::kWebsocket: record.set_kind("websocket"); break;
     case llmfw::v1::Capture::PAYLOAD_NOT_SET: break;
   }

@@ -145,6 +145,71 @@ TEST(ToMetadataRecord, NeverCopiesBodyOrHeaderValues) {
   EXPECT_EQ(serialized.find("SECRET"), std::string::npos);
 }
 
+llmfw::v1::Capture httpCapture() {
+  llmfw::v1::Capture capture;
+  capture.set_capture_id(5);
+  llmfw::v1::HttpExchange& http = *capture.mutable_http();
+  http.set_connect_host("claude.ai");
+  http.set_negotiated_alpn("http/1.1");
+  http.set_outcome(llmfw::v1::EXCHANGE_OUTCOME_COMPLETE);
+  llmfw::v1::HttpRequest& request = *http.mutable_request();
+  request.set_method("POST");
+  request.set_host("claude.ai");
+  request.set_target("/api/organizations/o1/chat_conversations/c1/completion?q=secret-search&flag&x=1");
+  auto addHeader = [](auto& headers, const char* name, const char* value) {
+    llmfw::v1::Header& header = *headers.Add();
+    header.set_name(name);
+    header.set_value(value);
+  };
+  addHeader(*request.mutable_headers(), "Content-Type", "application/json");
+  addHeader(*request.mutable_headers(), "X-Secret", "secret-header");
+  request.mutable_body()->set_total_bytes(120);
+  llmfw::v1::HttpResponse& response = *http.mutable_response();
+  response.set_status(200);
+  addHeader(*response.mutable_headers(), "content-type", "text/event-stream");
+  response.mutable_body()->set_total_bytes(9000);
+  return capture;
+}
+
+TEST(ToMetadataRecord, MapsHttpExchanges) {
+  const llmfw::v1::MetadataRecord record = toMetadataRecord(httpCapture(), logConfig("unused"), "inst");
+  EXPECT_EQ(record.kind(), "http");
+  EXPECT_EQ(record.host(), "claude.ai");
+  EXPECT_EQ(record.alpn(), "http/1.1");
+  EXPECT_EQ(record.method(), "POST");
+  EXPECT_EQ(record.path(), "/api/organizations/o1/chat_conversations/c1/completion");
+  EXPECT_EQ(std::vector<std::string>(record.query_keys().begin(), record.query_keys().end()),
+            (std::vector<std::string>{"q", "flag", "x"}));
+  EXPECT_EQ(record.status(), 200u);
+  EXPECT_EQ(record.request_content_type(), "application/json");
+  EXPECT_EQ(record.response_content_type(), "text/event-stream");
+  EXPECT_EQ(std::vector<std::string>(record.request_header_names().begin(), record.request_header_names().end()),
+            (std::vector<std::string>{"Content-Type", "X-Secret"}));
+  EXPECT_EQ(record.response_header_names_size(), 1);
+  EXPECT_EQ(record.request_bytes(), 120u);
+  EXPECT_EQ(record.response_bytes(), 9000u);
+  EXPECT_EQ(record.outcome(), llmfw::v1::EXCHANGE_OUTCOME_COMPLETE);
+  EXPECT_EQ(record.SerializeAsString().find("secret"), std::string::npos);
+}
+
+TEST(ToMetadataRecord, HttpContentTypesNeedTheAllowlist) {
+  MetadataLogConfig cfg = logConfig("unused");
+  cfg.logged_header_values = {"user-agent"};
+  const llmfw::v1::MetadataRecord record = toMetadataRecord(httpCapture(), cfg, "inst");
+  EXPECT_EQ(record.request_content_type(), "");
+  EXPECT_EQ(record.response_content_type(), "");
+}
+
+TEST(ToMetadataRecord, HttpHostFallsBackToTheConnectHost) {
+  llmfw::v1::Capture capture = httpCapture();
+  capture.mutable_http()->mutable_request()->clear_host();
+  capture.mutable_http()->mutable_request()->set_target("/plain");
+  const llmfw::v1::MetadataRecord record = toMetadataRecord(capture, logConfig("unused"), "inst");
+  EXPECT_EQ(record.host(), "claude.ai");
+  EXPECT_EQ(record.path(), "/plain");
+  EXPECT_EQ(record.query_keys_size(), 0);
+}
+
 TEST(MetadataLogger, CreatesPrivateDirectoriesAndFile) {
   const TempDir tmp;
   const fs::path path = tmp.path() / "a" / "b" / "metadata.jsonl";
