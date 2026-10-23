@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <future>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <thread>
@@ -28,6 +29,52 @@ namespace {
 
 using std::chrono::milliseconds;
 using TestStream = asio::ssl::stream<tcp::socket>;
+
+/// Records what the relay reports. Calls arrive on the relay's thread; the test reads
+/// the results only after closed() has resolved.
+class RecordingObserver final : public RelayObserver {
+ public:
+  struct Seen {
+    std::string client;
+    std::string upstream;
+    std::optional<ExchangeOutcomeTag> outcome;
+    int closed_calls = 0;
+  };
+
+  explicit RecordingObserver(std::shared_ptr<Seen> seen, std::shared_ptr<std::promise<void>> closed)
+      : seen_(std::move(seen)), closed_(std::move(closed)) {}
+
+  void onClientBytes(std::span<const std::uint8_t> bytes, Clock::time_point /*at*/) override {
+    seen_->client.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+  }
+  void onUpstreamBytes(std::span<const std::uint8_t> bytes, Clock::time_point /*at*/) override {
+    seen_->upstream.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+  }
+  void onClosed(ExchangeOutcomeTag unfinished) override {
+    seen_->outcome = unfinished;
+    if (++seen_->closed_calls == 1) {
+      closed_->set_value();
+    }
+  }
+
+ private:
+  std::shared_ptr<Seen> seen_;
+  std::shared_ptr<std::promise<void>> closed_;
+};
+
+/// A recording observer plus what it saw, for one relay.
+struct Observed {
+  std::shared_ptr<RecordingObserver::Seen> seen = std::make_shared<RecordingObserver::Seen>();
+  std::shared_ptr<std::promise<void>> closed = std::make_shared<std::promise<void>>();
+  std::future<void> closed_future = closed->get_future();
+
+  std::unique_ptr<RelayObserver> observer() { return std::make_unique<RecordingObserver>(seen, closed); }
+  /// Waits for onClosed and returns what was seen.
+  const RecordingObserver::Seen& wait() {
+    EXPECT_EQ(closed_future.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    return *seen;
+  }
+};
 
 /// The relay's world: shared objects, TLS contexts, the relay's io_context on its own
 /// thread, and the test's own io_context for blocking client and origin streams.
@@ -55,7 +102,8 @@ class Harness {
 
   /// Handshakes test client <-> relay (client side) and relay (upstream side) <-> test
   /// origin, then starts a relay between the two relay-side streams.
-  std::shared_ptr<DecryptedRelay> open(TestStream& client, TestStream& origin) {
+  std::shared_ptr<DecryptedRelay> open(TestStream& client, TestStream& origin,
+                                       std::unique_ptr<RelayObserver> observer = nullptr) {
     auto strand = asio::make_strand(io_);
     auto relay_client = std::make_unique<TlsStream>(strand, server_ctx_);
     auto relay_upstream = std::make_unique<TlsStream>(strand, client_ctx_);
@@ -90,7 +138,8 @@ class Harness {
     info.started_unix_us = 1'790'000'000'000'000;
     info.upstream_connect = std::chrono::microseconds(1500);
     info.client_handshake = std::chrono::microseconds(700);
-    auto relay = std::make_shared<DecryptedRelay>(std::move(relay_client), std::move(relay_upstream), info, context_);
+    auto relay = std::make_shared<DecryptedRelay>(std::move(relay_client), std::move(relay_upstream), info, context_,
+                                                  std::move(observer));
     relay->start();
     return relay;
   }
@@ -269,6 +318,70 @@ TEST(DecryptedRelay, ClosesWithoutACaptureWhenShutdownHasBegun) {
   EXPECT_TRUE(readUntilEnd(client));
   EXPECT_EQ(h.queue().popWait(milliseconds(300)), nullptr);
   EXPECT_EQ(h.counters().connections_decrypted.load(), 0u);
+}
+
+TEST(DecryptedRelay, TheObserverSeesForwardedBytesAndTheClientsEnd) {
+  Harness h;
+  TestStream client = h.newClient();
+  TestStream origin = h.newOrigin();
+  Observed observed;
+  h.open(client, origin, observed.observer());
+
+  asio::write(client, asio::buffer(std::string("GET / HTTP/1.1\r\n")));
+  EXPECT_EQ(readExactly(origin, 16), "GET / HTTP/1.1\r\n");
+  asio::write(origin, asio::buffer(std::string("HTTP/1.1 200")));
+  EXPECT_EQ(readExactly(client, 12), "HTTP/1.1 200");
+  client.lowest_layer().close();
+
+  const RecordingObserver::Seen& seen = observed.wait();
+  EXPECT_EQ(seen.client, "GET / HTTP/1.1\r\n");
+  EXPECT_EQ(seen.upstream, "HTTP/1.1 200");
+  EXPECT_EQ(seen.outcome, ExchangeOutcomeTag::kClientAborted);
+  EXPECT_EQ(seen.closed_calls, 1);
+  ASSERT_NE(h.queue().popWait(milliseconds(2000)), nullptr);
+}
+
+TEST(DecryptedRelay, TheObserverHearsWhenTheOriginEnds) {
+  Harness h;
+  TestStream client = h.newClient();
+  TestStream origin = h.newOrigin();
+  Observed observed;
+  h.open(client, origin, observed.observer());
+  std::thread origin_close([&] {
+    asio::write(origin, asio::buffer(std::string("bye")));
+    boost::system::error_code ignored;
+    origin.shutdown(ignored);
+  });
+  EXPECT_EQ(readExactly(client, 3), "bye");
+  boost::system::error_code ignored;
+  client.shutdown(ignored);
+  origin_close.join();
+  EXPECT_EQ(observed.wait().outcome, ExchangeOutcomeTag::kUpstreamAborted);
+  EXPECT_EQ(observed.seen->upstream, "bye");
+}
+
+TEST(DecryptedRelay, TheObserverHearsAnIdleTimeout) {
+  Harness h(milliseconds(200));
+  TestStream client = h.newClient();
+  TestStream origin = h.newOrigin();
+  Observed observed;
+  h.open(client, origin, observed.observer());
+  EXPECT_EQ(observed.wait().outcome, ExchangeOutcomeTag::kTimeout);
+}
+
+TEST(DecryptedRelay, TheObserverSeesLargeTransfersWhole) {
+  Harness h;
+  TestStream client = h.newClient();
+  TestStream origin = h.newOrigin();
+  Observed observed;
+  h.open(client, origin, observed.observer());
+  std::mt19937 rng(7);
+  std::string up(200'000, '\0');
+  for (char& c : up) c = static_cast<char>(rng());
+  asio::write(client, asio::buffer(up));
+  EXPECT_EQ(readExactly(origin, up.size()), up);
+  origin.lowest_layer().close();
+  EXPECT_EQ(observed.wait().client, up);
 }
 
 }  // namespace

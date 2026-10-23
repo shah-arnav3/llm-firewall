@@ -10,12 +10,13 @@
 namespace llmfw {
 
 DecryptedRelay::DecryptedRelay(std::unique_ptr<TlsStream> client, std::unique_ptr<TlsStream> upstream,
-                               DecryptedConnectionInfo info, ProxyContext& ctx)
+                               DecryptedConnectionInfo info, ProxyContext& ctx, std::unique_ptr<RelayObserver> observer)
     : client_(std::move(client)),
       upstream_(std::move(upstream)),
       info_(std::move(info)),
       ctx_(ctx),
-      timer_(client_->get_executor()) {}
+      timer_(client_->get_executor()),
+      observer_(std::move(observer)) {}
 
 void DecryptedRelay::start() {
   asio::dispatch(client_->get_executor(), [self = shared_from_this()] {
@@ -60,21 +61,25 @@ void DecryptedRelay::pump(Direction& dir) {
           return;
         }
         if (ec) {
-          self->onEnded(dir, ec);
+          self->onEnded(dir, ec, dir.from_client);
           return;
         }
         self->armTimer(self->ctx_.config.listen.idle_timeout);
+        dir.read_at = Clock::now();
         dir.busy = true;
         asio::async_write(dir.to, asio::buffer(dir.buffer.data(), n),
                           [self, &dir](const boost::system::error_code& write_ec, std::size_t written) {
                             dir.busy = false;
                             dir.bytes += written;
+                            if (!write_ec && self->observer_) {
+                              self->observe(dir, written);
+                            }
                             if (self->closing_) {
                               self->proceed();
                               return;
                             }
                             if (write_ec) {
-                              self->onEnded(dir, write_ec);
+                              self->onEnded(dir, write_ec, !dir.from_client);
                               return;
                             }
                             self->pump(dir);
@@ -82,7 +87,19 @@ void DecryptedRelay::pump(Direction& dir) {
       });
 }
 
-void DecryptedRelay::onEnded(Direction& dir, const boost::system::error_code& ec) {
+void DecryptedRelay::observe(Direction& dir, std::size_t n) {
+  const std::span<const std::uint8_t> bytes(dir.buffer.data(), n);
+  if (dir.from_client) {
+    observer_->onClientBytes(bytes, dir.read_at);
+  } else {
+    observer_->onUpstreamBytes(bytes, dir.read_at);
+  }
+}
+
+void DecryptedRelay::onEnded(Direction& dir, const boost::system::error_code& ec, bool client_ended) {
+  if (!closing_) {
+    end_ = client_ended ? ExchangeOutcomeTag::kClientAborted : ExchangeOutcomeTag::kUpstreamAborted;
+  }
   // asio reports a received close_notify as eof; a TCP close without one is stream_truncated.
   beginClose(ec == asio::error::eof ? &dir.to : nullptr);
 }
@@ -129,6 +146,9 @@ void DecryptedRelay::armTimer(std::chrono::milliseconds after) {
       return;
     }
     // Idle while relaying, or the close grace period ran out.
+    if (!self->closing_) {
+      self->end_ = ExchangeOutcomeTag::kTimeout;
+    }
     self->closing_ = true;
     self->closeSockets();
     self->proceed();
@@ -149,6 +169,10 @@ void DecryptedRelay::finish() {
   finished_ = true;
   timer_.cancel();
   closeSockets();
+  if (observer_) {
+    observer_->onClosed(end_);
+    observer_.reset();
+  }
   DecryptedObservation observation;
   observation.connection_id = info_.connection_id;
   observation.host = info_.host;
