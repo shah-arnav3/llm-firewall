@@ -22,4 +22,14 @@ enum class TunnelReasonTag {
   kClientSentEarly,
 };
 
+/// How an HTTP exchange ended. Mirrors proto llmfw.v1.ExchangeOutcome.
+enum class ExchangeOutcomeTag {
+  kComplete,
+  kClientAborted,
+  kUpstreamAborted,
+  kTimeout,
+  kParseError,
+  kUpgraded,
+};
+
 }  // namespace llmfw

@@ -1,5 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include "llmfw/capture_builder.hpp"
 
 namespace llmfw {
@@ -149,6 +154,173 @@ TEST(BuildDecryptedCapture, ClampsNegativeDurationsToZero) {
   EXPECT_EQ(decrypted.duration_us(), 0u);
   EXPECT_EQ(decrypted.upstream_connect_us(), 0u);
   EXPECT_EQ(decrypted.client_handshake_us(), 0u);
+}
+
+ExchangeConnection sampleConnection() {
+  ExchangeConnection c;
+  c.connection_id = 9;
+  c.connect_host = "api.anthropic.com";
+  c.connect_port = 443;
+  c.upstream_connect = std::chrono::microseconds(40'000);
+  c.client_handshake = std::chrono::microseconds(2'000);
+  return c;
+}
+
+CaptureConfig captureConfig() {
+  CaptureConfig cfg;
+  cfg.request_body_cap_bytes = 4;
+  cfg.response_body_cap_bytes = 8;
+  cfg.redact_headers = {"authorization", "cookie"};
+  return cfg;
+}
+
+Http1Head requestHead(std::string method = "POST") {
+  Http1Head head;
+  head.method = std::move(method);
+  head.target = "/v1/messages?beta=true";
+  head.headers = {{"Host", "API.Anthropic.com"},
+                  {"User-Agent", "claude-cli/2.1.299 (external, cli)"},
+                  {"AUTHORIZATION", "Bearer sk-secret"},
+                  {"Content-Type", "application/json"}};
+  return head;
+}
+
+Http1Head responseHead() {
+  Http1Head head;
+  head.status = 200;
+  head.reason = "OK";
+  head.headers = {{"Content-Type", "text/event-stream"}, {"set-cookie", "a=b"}};
+  return head;
+}
+
+struct ExchangeFixture {
+  ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  CaptureBuildContext ctx{classifier, counters};
+  CaptureConfig cfg = captureConfig();
+  ExchangeConnection connection = sampleConnection();
+  Clock::time_point t0 = Clock::now();
+
+  ExchangeCaptureBuilder builder(std::uint32_t index = 0) {
+    return {ctx, cfg, connection, index, t0, 1'790'000'000'000'000};
+  }
+};
+
+TEST(ExchangeCaptureBuilder, BuildsACompleteExchange) {
+  ExchangeFixture f;
+  ExchangeCaptureBuilder b = f.builder();
+  b.setRequestHead(requestHead());
+  b.markRequestComplete(f.t0 + std::chrono::milliseconds(1));
+  b.setResponseHead(responseHead(), f.t0 + std::chrono::milliseconds(300));
+  b.markResponseComplete(f.t0 + std::chrono::milliseconds(900));
+  const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
+
+  const llmfw::v1::Capture& capture = frame->capture();
+  EXPECT_EQ(capture.capture_id(), 1u);
+  EXPECT_EQ(capture.connection_id(), 9u);
+  EXPECT_EQ(capture.exchange_index(), 0u);
+  const llmfw::v1::HttpExchange& http = capture.http();
+  EXPECT_EQ(http.connect_host(), "api.anthropic.com");
+  EXPECT_EQ(http.connect_port(), 443u);
+  EXPECT_EQ(http.negotiated_alpn(), "http/1.1");
+  EXPECT_EQ(http.outcome(), llmfw::v1::EXCHANGE_OUTCOME_COMPLETE);
+  EXPECT_EQ(http.request().method(), "POST");
+  EXPECT_EQ(http.request().host(), "api.anthropic.com");
+  EXPECT_EQ(http.request().target(), "/v1/messages?beta=true");
+  EXPECT_EQ(http.request().http_version(), "HTTP/1.1");
+  EXPECT_EQ(http.request().headers_size(), 4);
+  EXPECT_EQ(http.response().status(), 200u);
+  EXPECT_EQ(http.response().reason(), "OK");
+
+  const llmfw::v1::Timings& timings = capture.timings();
+  EXPECT_EQ(timings.start_unix_us(), 1'790'000'000'000'000);
+  EXPECT_EQ(timings.request_complete_us(), 1'000u);
+  EXPECT_EQ(timings.response_first_byte_us(), 300'000u);
+  EXPECT_EQ(timings.response_complete_us(), 900'000u);
+  EXPECT_EQ(timings.upstream_connect_us(), 40'000u);
+  EXPECT_EQ(timings.client_tls_handshake_us(), 2'000u);
+}
+
+TEST(ExchangeCaptureBuilder, RedactsConfiguredHeadersIgnoringCase) {
+  ExchangeFixture f;
+  f.cfg.redact_headers.push_back("set-cookie");
+  ExchangeCaptureBuilder b = f.builder();
+  b.setRequestHead(requestHead());
+  b.setResponseHead(responseHead(), f.t0);
+  const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
+  const llmfw::v1::Header& auth = frame->capture().http().request().headers(2);
+  EXPECT_EQ(auth.name(), "AUTHORIZATION");
+  EXPECT_TRUE(auth.redacted());
+  EXPECT_EQ(auth.value(), "");
+  EXPECT_EQ(auth.original_value_length(), std::string("Bearer sk-secret").size());
+  EXPECT_FALSE(frame->capture().http().request().headers(3).redacted());
+  EXPECT_TRUE(frame->capture().http().response().headers(1).redacted());
+  EXPECT_EQ(frame->SerializeAsString().find("sk-secret"), std::string::npos);
+}
+
+TEST(ExchangeCaptureBuilder, ClassifiesTheRequestUserAgent) {
+  ExchangeFixture f;
+  f.connection.connect_user_agent = "";
+  ExchangeCaptureBuilder b = f.builder();
+  b.setRequestHead(requestHead());
+  const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
+  EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_CLAUDE_CODE);
+  EXPECT_EQ(frame->capture().client().user_agent(), "claude-cli/2.1.299 (external, cli)");
+  EXPECT_EQ(frame->capture().client().connect_user_agent(), "");
+}
+
+TEST(ExchangeCaptureBuilder, FallsBackToTheConnectUserAgent) {
+  ExchangeFixture f;
+  f.connection.connect_user_agent = "Mozilla/5.0 Claude/2.9 Electron/38";
+  Http1Head without_agent = requestHead();
+  without_agent.headers.erase(without_agent.headers.begin() + 1);
+  ExchangeCaptureBuilder b = f.builder();
+  b.setRequestHead(without_agent);
+  auto frame = b.finish(ExchangeOutcomeTag::kComplete);
+  EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_UI);
+  EXPECT_EQ(frame->capture().client().user_agent(), "Mozilla/5.0 Claude/2.9 Electron/38");
+
+  Http1Head unknown_agent = requestHead();
+  unknown_agent.headers[1].second = "fetch/1.0";
+  ExchangeCaptureBuilder b2 = f.builder();
+  b2.setRequestHead(unknown_agent);
+  frame = b2.finish(ExchangeOutcomeTag::kComplete);
+  EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_UI);
+  EXPECT_EQ(frame->capture().client().user_agent(), "fetch/1.0");
+}
+
+TEST(ExchangeCaptureBuilder, ConnectionTimingsOnlyOnTheFirstExchange) {
+  ExchangeFixture f;
+  ExchangeCaptureBuilder b = f.builder(3);
+  b.setRequestHead(requestHead());
+  const auto frame = b.finish(ExchangeOutcomeTag::kComplete);
+  EXPECT_EQ(frame->capture().exchange_index(), 3u);
+  EXPECT_EQ(frame->capture().timings().upstream_connect_us(), 0u);
+  EXPECT_EQ(frame->capture().timings().client_tls_handshake_us(), 0u);
+}
+
+TEST(ExchangeCaptureBuilder, AnExchangeEndedEarlyHasNoResponse) {
+  ExchangeFixture f;
+  ExchangeCaptureBuilder b = f.builder();
+  b.setRequestHead(requestHead("HEAD"));
+  EXPECT_TRUE(b.isHeadRequest());
+  const auto frame = b.finish(ExchangeOutcomeTag::kUpstreamAborted);
+  EXPECT_FALSE(frame->capture().http().has_response());
+  EXPECT_EQ(frame->capture().http().outcome(), llmfw::v1::EXCHANGE_OUTCOME_UPSTREAM_ABORTED);
+}
+
+TEST(ExchangeCaptureBuilder, MapsEveryOutcome) {
+  const std::vector<std::pair<ExchangeOutcomeTag, llmfw::v1::ExchangeOutcome>> cases{
+      {ExchangeOutcomeTag::kComplete, llmfw::v1::EXCHANGE_OUTCOME_COMPLETE},
+      {ExchangeOutcomeTag::kClientAborted, llmfw::v1::EXCHANGE_OUTCOME_CLIENT_ABORTED},
+      {ExchangeOutcomeTag::kUpstreamAborted, llmfw::v1::EXCHANGE_OUTCOME_UPSTREAM_ABORTED},
+      {ExchangeOutcomeTag::kTimeout, llmfw::v1::EXCHANGE_OUTCOME_TIMEOUT},
+      {ExchangeOutcomeTag::kParseError, llmfw::v1::EXCHANGE_OUTCOME_PARSE_ERROR},
+      {ExchangeOutcomeTag::kUpgraded, llmfw::v1::EXCHANGE_OUTCOME_UPGRADED}};
+  for (const auto& [tag, expected] : cases) {
+    ExchangeFixture f;
+    EXPECT_EQ(f.builder().finish(tag)->capture().http().outcome(), expected);
+  }
 }
 
 TEST(ApproximateFrameBytes, IsTheSerializedSize) {
