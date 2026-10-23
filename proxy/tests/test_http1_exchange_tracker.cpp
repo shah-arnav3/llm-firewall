@@ -161,15 +161,45 @@ TEST(Http1ExchangeTracker, AFramingErrorStopsRecording) {
   EXPECT_EQ(f.parse_errors, 1);
 }
 
-TEST(Http1ExchangeTracker, AProtocolSwitchStopsRecording) {
+constexpr std::string_view kUpgradeRequest =
+    "GET /ws HTTP/1.1\r\nHost: a\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n";
+
+TEST(Http1ExchangeTracker, ASwitchingResponsePushesTheUpgradeAndStopsRecording) {
   TrackerFixture f;
-  f.client("GET /ws HTTP/1.1\r\nHost: a\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+  f.client(kUpgradeRequest);
+  EXPECT_TRUE(f.pushed.empty());
+  f.upstream("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n\x81\x00");
   ASSERT_EQ(f.pushed.size(), 1u);
   EXPECT_EQ(f.http(0).outcome(), llmfw::v1::EXCHANGE_OUTCOME_UPGRADED);
-  f.upstream("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n\x81\x00");
+  EXPECT_EQ(f.http(0).response().status(), 101u);
+  f.client("\x81\x80\x00\x00\x00\x00");
+  f.upstream(kOk);
   f.tracker.onClosed(ExchangeOutcomeTag::kClientAborted);
   EXPECT_EQ(f.pushed.size(), 1u);
   EXPECT_EQ(f.parse_errors, 0);
+}
+
+TEST(Http1ExchangeTracker, ARefusedUpgradeResumesWithTheHeldBytes) {
+  TrackerFixture f;
+  f.client(std::string(kUpgradeRequest) + "GET /next");
+  f.client(" HTTP/1.1\r\nHost: a\r\n\r\n");
+  f.upstream("HTTP/1.1 426 Upgrade Required\r\nContent-Length: 0\r\n\r\n");
+  ASSERT_EQ(f.pushed.size(), 1u);
+  EXPECT_EQ(f.http(0).outcome(), llmfw::v1::EXCHANGE_OUTCOME_COMPLETE);
+  EXPECT_EQ(f.http(0).response().status(), 426u);
+  f.upstream(kOk);
+  ASSERT_EQ(f.pushed.size(), 2u);
+  EXPECT_EQ(f.http(1).request().target(), "/next");
+  EXPECT_EQ(f.http(1).response().status(), 200u);
+}
+
+TEST(Http1ExchangeTracker, TooManyBytesWhileAnUpgradeWaitsIsAFramingError) {
+  TrackerFixture f;
+  f.client(kUpgradeRequest);
+  f.client(std::string(Http1ExchangeTracker::kMaxHeldUpgradeBytes + 1, 'x'));
+  ASSERT_EQ(f.pushed.size(), 1u);
+  EXPECT_EQ(f.http(0).outcome(), llmfw::v1::EXCHANGE_OUTCOME_PARSE_ERROR);
+  EXPECT_EQ(f.parse_errors, 1);
 }
 
 TEST(Http1ExchangeTracker, SplitChunksGiveTheSameExchanges) {

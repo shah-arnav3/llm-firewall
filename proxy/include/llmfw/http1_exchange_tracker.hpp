@@ -6,6 +6,8 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
+#include <vector>
 
 #include "capture.pb.h"
 #include "llmfw/capture_builder.hpp"
@@ -31,12 +33,18 @@ struct ExchangeSinks {
 ///   - A response with no request waiting is not recorded.
 ///   - On a framing error in either direction, every exchange in progress is pushed
 ///     with kParseError, parse_error is called, and nothing more is recorded.
-///   - When either direction switches protocols, exchanges in progress are pushed
-///     with kUpgraded and nothing more is recorded.
+///   - Upgrades: after an Upgrade request, client bytes are held back from the request
+///     parser (up to kMaxHeldUpgradeBytes) until its response arrives. A 101 pushes
+///     that exchange with kUpgraded, and nothing more is recorded. Any other final
+///     response means the server refused, so parsing resumes with the held bytes.
+///     More than kMaxHeldUpgradeBytes while waiting counts as a framing error.
 ///   - onClosed completes a response delimited by the close, then pushes every
 ///     exchange still in progress with the given outcome.
 class Http1ExchangeTracker final : public RelayObserver {
  public:
+  /// The most client bytes held back while an upgrade is waiting for its response.
+  static constexpr std::size_t kMaxHeldUpgradeBytes = 64 * 1024;
+
   /// `ctx`, `cfg` and `connection` must outlive the tracker.
   Http1ExchangeTracker(const CaptureBuildContext& ctx, const CaptureConfig& cfg, CaptureMode mode,
                        const ExchangeConnection& connection, ExchangeSinks sinks);
@@ -55,7 +63,9 @@ class Http1ExchangeTracker final : public RelayObserver {
     bool response_started = false;
   };
 
+  void feedRequests(std::span<const std::uint8_t> bytes);
   void handle(const FeedResult& result);
+  void failParse();
   void finishFront(ExchangeOutcomeTag outcome);
   void stop(ExchangeOutcomeTag outcome);
 
@@ -73,6 +83,11 @@ class Http1ExchangeTracker final : public RelayObserver {
   bool capturing_ = true;
   /// Whether the newest exchange's request is still being parsed.
   bool request_open_ = false;
+  /// An Upgrade request is waiting for its response; client bytes go to held_.
+  bool upgrade_pending_ = false;
+  /// The upgrade was refused: resume the request parser once the response feed returns.
+  bool resume_requests_ = false;
+  std::vector<std::uint8_t> held_;
   /// When the bytes being parsed in each direction arrived. A message starts at the
   /// first chunk read after the previous message in its direction ended.
   Clock::time_point request_chunk_at_{};

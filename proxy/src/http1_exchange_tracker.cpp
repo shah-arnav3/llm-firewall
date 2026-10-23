@@ -57,6 +57,11 @@ class Http1ExchangeTracker::ResponseEvents final : public Http1Events {
   void onHead(const Http1Head& head) override {
     const bool interim = head.status < 200 && head.status != 101;
     active_ = !interim && !t_.in_flight_.empty() && !t_.in_flight_.front().response_started;
+    switching_ = head.status == 101;
+    // While an upgrade waits, its request is the only one in flight, so this answers it.
+    if (t_.upgrade_pending_ && active_ && !switching_) {
+      t_.resume_requests_ = true;
+    }
     if (active_) {
       t_.in_flight_.front().builder->setResponseHead(head, t_.response_started_at_.value_or(t_.response_chunk_at_));
       t_.in_flight_.front().response_started = true;
@@ -72,7 +77,7 @@ class Http1ExchangeTracker::ResponseEvents final : public Http1Events {
   void onMessageComplete() override {
     if (active_) {
       t_.in_flight_.front().builder->markResponseComplete(t_.response_chunk_at_);
-      t_.finishFront(ExchangeOutcomeTag::kComplete);
+      t_.finishFront(switching_ ? ExchangeOutcomeTag::kUpgraded : ExchangeOutcomeTag::kComplete);
       active_ = false;
     }
     t_.response_started_at_.reset();
@@ -80,7 +85,8 @@ class Http1ExchangeTracker::ResponseEvents final : public Http1Events {
 
  private:
   Http1ExchangeTracker& t_;
-  bool active_ = false;  ///< The response being parsed completes the front exchange.
+  bool active_ = false;     ///< The response being parsed completes the front exchange.
+  bool switching_ = false;  ///< The response being parsed is a 101.
 };
 
 Http1ExchangeTracker::Http1ExchangeTracker(const CaptureBuildContext& ctx, const CaptureConfig& cfg, CaptureMode mode,
@@ -102,10 +108,29 @@ void Http1ExchangeTracker::onClientBytes(std::span<const std::uint8_t> bytes, Cl
     return;
   }
   request_chunk_at_ = at;
+  if (upgrade_pending_) {
+    if (held_.size() + bytes.size() > kMaxHeldUpgradeBytes) {
+      failParse();
+      return;
+    }
+    held_.insert(held_.end(), bytes.begin(), bytes.end());
+    return;
+  }
   if (!request_started_at_) {
     request_started_at_ = at;
   }
-  handle(request_parser_.feed(bytes));
+  feedRequests(bytes);
+}
+
+void Http1ExchangeTracker::feedRequests(std::span<const std::uint8_t> bytes) {
+  const FeedResult result = request_parser_.feed(bytes);
+  if (result.status != FeedStatus::kUpgrade) {
+    handle(result);
+    return;
+  }
+  upgrade_pending_ = true;
+  const std::span<const std::uint8_t> rest = bytes.subspan(result.consumed);
+  held_.assign(rest.begin(), rest.end());
 }
 
 void Http1ExchangeTracker::onUpstreamBytes(std::span<const std::uint8_t> bytes, Clock::time_point at) {
@@ -117,6 +142,17 @@ void Http1ExchangeTracker::onUpstreamBytes(std::span<const std::uint8_t> bytes, 
     response_started_at_ = at;
   }
   handle(response_parser_.feed(bytes));
+  if (capturing_ && resume_requests_) {
+    resume_requests_ = false;
+    upgrade_pending_ = false;
+    request_parser_.resumeAfterRejectedUpgrade();
+    const std::vector<std::uint8_t> held = std::move(held_);
+    held_.clear();
+    if (!held.empty()) {
+      request_started_at_ = request_chunk_at_;
+      feedRequests(held);
+    }
+  }
 }
 
 void Http1ExchangeTracker::onClosed(ExchangeOutcomeTag unfinished) {
@@ -130,12 +166,17 @@ void Http1ExchangeTracker::onClosed(ExchangeOutcomeTag unfinished) {
 
 void Http1ExchangeTracker::handle(const FeedResult& result) {
   if (result.status == FeedStatus::kError) {
-    stop(ExchangeOutcomeTag::kParseError);
-    if (sinks_.parse_error) {
-      sinks_.parse_error();
-    }
+    failParse();
   } else if (result.status == FeedStatus::kUpgrade) {
+    // A 101 has already pushed its exchange; whatever is left cannot be HTTP.
     stop(ExchangeOutcomeTag::kUpgraded);
+  }
+}
+
+void Http1ExchangeTracker::failParse() {
+  stop(ExchangeOutcomeTag::kParseError);
+  if (sinks_.parse_error) {
+    sinks_.parse_error();
   }
 }
 
