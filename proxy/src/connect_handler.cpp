@@ -8,6 +8,7 @@
 
 #include "llmfw/blind_tunnel.hpp"
 #include "llmfw/host_scope.hpp"
+#include "llmfw/http1_exchange_tracker.hpp"
 #include "llmfw/log.hpp"
 #include "llmfw/pac.hpp"
 #include "llmfw/tls_breaker.hpp"
@@ -15,6 +16,46 @@
 namespace llmfw {
 
 namespace {
+
+/// Records the HTTP/1.1 exchanges of one decrypted connection: owns the connection
+/// facts the tracker refers to, pushes its captures and counts parse errors.
+class Http1Capture final : public RelayObserver {
+ public:
+  Http1Capture(ExchangeConnection connection, ProxyContext& ctx)
+      : connection_(std::move(connection)),
+        tracker_(ctx.build, ctx.config.capture, ctx.config.mode, connection_,
+                 ExchangeSinks{[&ctx](std::unique_ptr<llmfw::v1::Frame> frame) { (void)ctx.queue.tryPush(std::move(frame)); },
+                               [&ctx] { ctx.counters.http_parse_errors.fetch_add(1, std::memory_order_relaxed); }}) {}
+
+  void onClientBytes(std::span<const std::uint8_t> bytes, Clock::time_point at) override {
+    tracker_.onClientBytes(bytes, at);
+  }
+  void onUpstreamBytes(std::span<const std::uint8_t> bytes, Clock::time_point at) override {
+    tracker_.onUpstreamBytes(bytes, at);
+  }
+  void onClosed(ExchangeOutcomeTag unfinished) override { tracker_.onClosed(unfinished); }
+
+ private:
+  ExchangeConnection connection_;
+  Http1ExchangeTracker tracker_;
+};
+
+/// The observer for a decrypted connection, or null for a protocol that is not parsed.
+/// The terminator offers only http/1.1, and no ALPN at all also means HTTP/1.1.
+std::unique_ptr<RelayObserver> observerFor(const DecryptedConnectionInfo& info, ProxyContext& ctx) {
+  if (!info.alpn.empty() && info.alpn != "http/1.1") {
+    return nullptr;
+  }
+  ExchangeConnection connection;
+  connection.connection_id = info.connection_id;
+  connection.connect_host = info.host;
+  connection.connect_port = info.port;
+  connection.alpn = info.alpn;
+  connection.connect_user_agent = info.connect_user_agent;
+  connection.upstream_connect = info.upstream_connect;
+  connection.client_handshake = info.client_handshake;
+  return std::make_unique<Http1Capture>(std::move(connection), ctx);
+}
 
 constexpr std::string_view kBadRequest =
     "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -314,7 +355,10 @@ void ClientConnection::onClientHandshake(const boost::system::error_code& ec, co
   }
   info_.alpn = result.alpn;
   info_.client_handshake = std::chrono::duration_cast<std::chrono::microseconds>(result.handshake_time);
-  std::make_shared<DecryptedRelay>(std::move(client_tls_), std::move(upstream_), std::move(info_), ctx_)->start();
+  std::unique_ptr<RelayObserver> observer = observerFor(info_, ctx_);
+  std::make_shared<DecryptedRelay>(std::move(client_tls_), std::move(upstream_), std::move(info_), ctx_,
+                                   std::move(observer))
+      ->start();
 }
 
 void ClientConnection::closeDecryptAttempt() {

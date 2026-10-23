@@ -437,10 +437,12 @@ repository when they are built.
 
 ## Build and test
 
-The proxy in `proxy/` builds and runs in `metadata_only` mode: it logs one metadata
-record per connection and never records content. By default it blind-tunnels every
-CONNECT. With `proxy.decrypt: true` it decrypts the scoped hosts its leaf certificate
-covers and relays them byte for byte (HTTP is not parsed yet).
+The proxy in `proxy/` builds and runs in `metadata_only` mode: it logs metadata records
+and never records content. By default it blind-tunnels every CONNECT, with one record
+per connection. With `proxy.decrypt: true` it decrypts the scoped hosts its leaf
+certificate covers and relays them byte for byte, and it also parses the HTTP/1.1
+inside: each request and its response get an `"http"` record with the method, the
+path without its query string, the status, timings and body sizes.
 `llmfw-setup profile` writes the configuration profile that points Claude at it, and
 `llmfw-setup certs` creates the certificates that decryption will use, and
 `llmfw-setup trust` trusts the CA in the login Keychain. Installing (LaunchAgents) and
@@ -537,8 +539,9 @@ curl -x http://127.0.0.1:18443 \
 ```
 
 `curl -v` shows the issuer `llm-firewall local CA (…)`, the response is the real one
-(401 without an API key), and the metadata log gets a `"kind":"decrypted"` record with
-the byte counts, ALPN and timings. Hosts outside `scope.decrypt_hosts` are still
+(401 without an API key), and the metadata log gets a `"kind":"http"` record for the
+request (`"method":"GET"`, `"path":"/v1/models"`, `"status":401`), then a
+`"kind":"decrypted"` record for the connection with the byte counts, ALPN and timings. Hosts outside `scope.decrypt_hosts` are still
 blind-tunneled. Do not point Claude at a decrypting proxy until the CA is trusted
 ([Trusting the CA](#trusting-the-ca)):
 Claude would reject the certificate, and the client TLS breaker would then tunnel the

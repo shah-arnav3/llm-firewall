@@ -78,12 +78,13 @@ struct Pki {
   }
 };
 
-/// The real origin stand-in: serves TLS with its own claude.ai leaf and echoes, one
-/// thread per connection. Accepting runs on its own io_context thread, and only that
+/// The real origin stand-in: serves TLS with its own claude.ai leaf, one thread per
+/// connection. It echoes, or with `http_reply` answers each request head with it. Accepting runs on its own io_context thread, and only that
 /// thread touches the acceptor.
 class Origin {
  public:
-  explicit Origin(const Pki& pki) : acceptor_(io_, {asio::ip::make_address("127.0.0.1"), 0}) {
+  explicit Origin(const Pki& pki, std::string http_reply = {})
+      : http_reply_(std::move(http_reply)), acceptor_(io_, {asio::ip::make_address("127.0.0.1"), 0}) {
     SSL_CTX_use_certificate(ctx_.native_handle(), pki.leaf.cert.get());
     SSL_CTX_use_PrivateKey(ctx_.native_handle(), pki.leaf.key.get());
     acceptNext();
@@ -120,15 +121,26 @@ class Origin {
     boost::system::error_code ec;
     tls.handshake(asio::ssl::stream_base::server, ec);
     std::array<char, 4096> buf{};
+    std::string request;
     while (!ec) {
       const std::size_t n = tls.read_some(asio::buffer(buf), ec);
-      if (!ec) {
+      if (ec) {
+        break;
+      }
+      if (http_reply_.empty()) {
         asio::write(tls, asio::buffer(buf.data(), n), ec);
+        continue;
+      }
+      request.append(buf.data(), n);
+      if (request.find("\r\n\r\n") != std::string::npos) {
+        request.clear();
+        asio::write(tls, asio::buffer(http_reply_), ec);
       }
     }
     tls.shutdown(ec);
   }
 
+  std::string http_reply_;
   asio::io_context io_;
   asio::ssl::context ctx_{asio::ssl::context::tls_server};
   tcp::acceptor acceptor_;
@@ -144,6 +156,7 @@ class DecryptHarness {
   DecryptHarness(const Pki& proxy_pki, const Pki& trusted_origin_ca, tcp::endpoint origin)
       : scope_({"claude.ai", "*.claude.ai"}), origin_(origin) {
     config_.listen.port = 0;
+    config_.capture.redact_headers = {"cookie", "authorization"};
     config_.listen.client_tls_breaker_cooldown = milliseconds(60'000);
     config_.upstream.connect_timeout = milliseconds(2000);
     config_.upstream.tls_handshake_timeout = milliseconds(2000);
@@ -272,6 +285,48 @@ TEST(DecryptPath, DecryptsAScopedConnectEndToEnd) {
   EXPECT_GT(decrypted.client_handshake_us(), 0u);
   EXPECT_EQ(frame->capture().client().connect_user_agent(), kUserAgent);
   EXPECT_EQ(proxy.counters().connections_decrypted.load(), 1u);
+  EXPECT_EQ(proxy.counters().http_parse_errors.load(), 1u) << "\"ping\" is not HTTP";
+}
+
+TEST(DecryptPath, RecordsEachHttpExchangeBeforeTheConnection) {
+  const Pki proxy_pki("llm-firewall local CA (proxy)");
+  const Pki origin_pki("origin CA");
+  Origin origin(origin_pki, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\nok");
+  DecryptHarness proxy(proxy_pki, origin_pki, origin.endpoint());
+
+  tcp::socket socket = proxy.sendConnect("claude.ai:443");
+  ASSERT_EQ(readExactly(socket, kEstablished.size()), kEstablished);
+  TlsClient client(std::move(socket), *proxy_pki.ca.cert);
+  ASSERT_FALSE(client.handshake_error) << client.handshake_error.message();
+  const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\nok";
+  for (const std::string target : {"/api/one?token=abc", "/api/two"}) {
+    asio::write(*client.stream, asio::buffer("GET " + target +
+                                             " HTTP/1.1\r\nHost: claude.ai\r\nCookie: session=secret\r\n\r\n"));
+    std::string got(response.size(), '\0');
+    asio::read(*client.stream, asio::buffer(got));
+    EXPECT_EQ(got, response) << "the response reaches the client unchanged";
+  }
+  boost::system::error_code ignored;
+  client.stream->shutdown(ignored);
+
+  for (std::uint32_t i = 0; i < 2; ++i) {
+    const auto frame = proxy.queue().popWait(milliseconds(3000));
+    ASSERT_NE(frame, nullptr);
+    ASSERT_EQ(frame->capture().payload_case(), llmfw::v1::Capture::kHttp);
+    const llmfw::v1::HttpExchange& http = frame->capture().http();
+    EXPECT_EQ(frame->capture().exchange_index(), i);
+    EXPECT_EQ(http.request().target(), i == 0 ? "/api/one?token=abc" : "/api/two");
+    EXPECT_EQ(http.response().status(), 200u);
+    EXPECT_EQ(http.response().body().total_bytes(), 2u);
+    EXPECT_TRUE(http.response().body().omitted()) << "metadata_only keeps no body bytes";
+    EXPECT_EQ(http.outcome(), llmfw::v1::EXCHANGE_OUTCOME_COMPLETE);
+    EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_UI) << "classified by the CONNECT User-Agent";
+    EXPECT_EQ(frame->SerializeAsString().find("secret"), std::string::npos) << "the cookie is redacted";
+  }
+  const auto connection = proxy.queue().popWait(milliseconds(3000));
+  ASSERT_NE(connection, nullptr);
+  EXPECT_EQ(connection->capture().payload_case(), llmfw::v1::Capture::kDecrypted);
+  EXPECT_EQ(proxy.counters().http_parse_errors.load(), 0u);
 }
 
 TEST(DecryptPath, TunnelsWhenTheOriginFailsVerification) {
