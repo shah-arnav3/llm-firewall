@@ -108,6 +108,8 @@ class ExchangeCaptureBuilder {
 
   /// Whether setRequestHead was called with a HEAD request.
   [[nodiscard]] bool isHeadRequest() const;
+  /// The request's User-Agent; empty before setRequestHead or if it sent none.
+  [[nodiscard]] const std::string& requestUserAgent() const;
 
   /// The finished frame. Takes the next capture id from ctx.counters.
   [[nodiscard]] std::unique_ptr<llmfw::v1::Frame> finish(ExchangeOutcomeTag outcome);

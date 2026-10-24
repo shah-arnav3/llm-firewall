@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 
 #include "llmfw/common.hpp"
 
@@ -21,6 +22,8 @@ class RelayObserver {
   /// The relay has ended; no more calls follow. `unfinished` is the outcome for an
   /// exchange still in progress: which side ended the connection, or a timeout.
   virtual void onClosed(ExchangeOutcomeTag unfinished) = 0;
+  /// The User-Agent the client sent inside TLS, or empty if none was seen.
+  [[nodiscard]] virtual std::string clientUserAgent() const { return {}; }
 };
 
 }  // namespace llmfw

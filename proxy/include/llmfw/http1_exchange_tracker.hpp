@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "capture.pb.h"
@@ -53,6 +54,8 @@ class Http1ExchangeTracker final : public RelayObserver {
   void onClientBytes(std::span<const std::uint8_t> bytes, Clock::time_point at) override;
   void onUpstreamBytes(std::span<const std::uint8_t> bytes, Clock::time_point at) override;
   void onClosed(ExchangeOutcomeTag unfinished) override;
+  /// The User-Agent of the first request that sent one.
+  [[nodiscard]] std::string clientUserAgent() const override;
 
  private:
   class RequestEvents;
@@ -80,6 +83,7 @@ class Http1ExchangeTracker final : public RelayObserver {
   Http1Parser response_parser_;
   std::deque<Exchange> in_flight_;
   std::uint32_t next_exchange_index_ = 0;
+  std::string client_user_agent_;
   bool capturing_ = true;
   /// Whether the newest exchange's request is still being parsed.
   bool request_open_ = false;

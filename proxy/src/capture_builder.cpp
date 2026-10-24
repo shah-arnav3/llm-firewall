@@ -210,6 +210,8 @@ void ExchangeCaptureBuilder::markResponseComplete(Clock::time_point at) {
 
 bool ExchangeCaptureBuilder::isHeadRequest() const { return head_request_; }
 
+const std::string& ExchangeCaptureBuilder::requestUserAgent() const { return request_user_agent_; }
+
 std::unique_ptr<llmfw::v1::Frame> ExchangeCaptureBuilder::finish(ExchangeOutcomeTag outcome) {
   llmfw::v1::Capture& capture = *frame_->mutable_capture();
   capture.set_capture_id(ctx_.counters.nextCaptureId());

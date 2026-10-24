@@ -78,6 +78,15 @@ TEST(Http1ExchangeTracker, PairsPipelinedRequestsInOrder) {
   EXPECT_EQ(f.http(1).response().status(), 404u);
 }
 
+TEST(Http1ExchangeTracker, ReportsTheFirstUserAgentSent) {
+  TrackerFixture f;
+  EXPECT_EQ(f.tracker.clientUserAgent(), "");
+  f.client("GET /a HTTP/1.1\r\nHost: api.anthropic.com\r\n\r\n");
+  EXPECT_EQ(f.tracker.clientUserAgent(), "") << "the first request sent none";
+  f.client(std::string(kGet) + "GET /b HTTP/1.1\r\nHost: api.anthropic.com\r\nUser-Agent: other/1\r\n\r\n");
+  EXPECT_EQ(f.tracker.clientUserAgent(), "claude-cli/2");
+}
+
 TEST(Http1ExchangeTracker, HeadResponseHasNoBody) {
   TrackerFixture f;
   f.client("HEAD /a HTTP/1.1\r\nHost: a\r\n\r\n");

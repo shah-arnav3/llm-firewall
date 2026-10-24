@@ -26,6 +26,9 @@ class Http1ExchangeTracker::RequestEvents final : public Http1Events {
     exchange.builder = std::make_unique<ExchangeCaptureBuilder>(t_.ctx_, t_.cfg_, t_.mode_, t_.connection_,
                                                                 t_.next_exchange_index_++, started, unixMicros(started));
     exchange.builder->setRequestHead(head);
+    if (t_.client_user_agent_.empty()) {
+      t_.client_user_agent_ = exchange.builder->requestUserAgent();
+    }
     t_.response_parser_.expectResponse(exchange.builder->isHeadRequest());
     t_.in_flight_.push_back(std::move(exchange));
     t_.request_open_ = true;
@@ -163,6 +166,8 @@ void Http1ExchangeTracker::onClosed(ExchangeOutcomeTag unfinished) {
   (void)response_parser_.finish();
   stop(unfinished);
 }
+
+std::string Http1ExchangeTracker::clientUserAgent() const { return client_user_agent_; }
 
 void Http1ExchangeTracker::handle(const FeedResult& result) {
   if (result.status == FeedStatus::kError) {
