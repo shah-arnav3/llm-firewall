@@ -143,6 +143,28 @@ TEST(BuildDecryptedCapture, ClassifiesTheConnectUserAgent) {
   EXPECT_EQ(buildDecryptedCapture({classifier, counters}, d)->capture().client().path(), llmfw::v1::CLIENT_PATH_UI);
 }
 
+TEST(BuildDecryptedCapture, PrefersTheUserAgentSentInsideTls) {
+  const ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  DecryptedObservation d = sampleDecrypted();
+  d.user_agent = "claude-cli/2.1 (external)";
+  const auto frame = buildDecryptedCapture({classifier, counters}, d);
+  EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_CLAUDE_CODE);
+  EXPECT_EQ(frame->capture().client().user_agent(), "claude-cli/2.1 (external)");
+  EXPECT_EQ(frame->capture().client().connect_user_agent(), "");
+}
+
+TEST(BuildDecryptedCapture, AnUnknownInnerUserAgentFallsBackToTheConnects) {
+  const ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  DecryptedObservation d = sampleDecrypted();
+  d.user_agent = "Bun/1.4";
+  d.connect_user_agent = "Mozilla/5.0 Claude/2.9 Electron/38";
+  const auto frame = buildDecryptedCapture({classifier, counters}, d);
+  EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_UI);
+  EXPECT_EQ(frame->capture().client().user_agent(), "Bun/1.4");
+}
+
 TEST(BuildDecryptedCapture, ClampsNegativeDurationsToZero) {
   const ClientClassifier classifier = desktopClassifier();
   ProxyCounters counters;

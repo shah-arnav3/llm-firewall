@@ -82,20 +82,33 @@ std::uint64_t nonNegativeMicros(std::chrono::microseconds value) {
   return static_cast<std::uint64_t>(std::max<std::int64_t>(0, value.count()));
 }
 
+/// Fills in the client: `user_agent` if it is set, otherwise the CONNECT's. A client
+/// that sends a generic User-Agent inside TLS still gets the CONNECT's classification.
+void setClient(const CaptureBuildContext& ctx, llmfw::v1::ClientInfo& client, std::string_view user_agent,
+               std::string_view connect_user_agent) {
+  if (user_agent.empty()) {
+    user_agent = connect_user_agent;
+  }
+  ClientPathTag path = ctx.classifier.classify(user_agent);
+  if (path == ClientPathTag::kUnknown) {
+    path = ctx.classifier.classify(connect_user_agent);
+  }
+  client.set_path(toProto(path));
+  client.set_user_agent(std::string(user_agent));
+  client.set_connect_user_agent(std::string(connect_user_agent));
+}
+
 /// A frame whose capture has its id, connection, client info and start time filled in.
 std::unique_ptr<llmfw::v1::Frame> startCapture(const CaptureBuildContext& ctx, std::uint64_t connection_id,
-                                               std::string_view connect_user_agent, std::int64_t start_unix_us) {
+                                               std::string_view user_agent, std::string_view connect_user_agent,
+                                               std::int64_t start_unix_us) {
   auto frame = std::make_unique<llmfw::v1::Frame>();
   llmfw::v1::Capture& capture = *frame->mutable_capture();
   capture.set_capture_id(ctx.counters.nextCaptureId());
   capture.set_connection_id(connection_id);
   capture.set_exchange_index(0);
 
-  llmfw::v1::ClientInfo& client = *capture.mutable_client();
-  client.set_path(toProto(ctx.classifier.classify(connect_user_agent)));
-  client.set_user_agent(std::string(connect_user_agent));
-  client.set_connect_user_agent(std::string(connect_user_agent));
-
+  setClient(ctx, *capture.mutable_client(), user_agent, connect_user_agent);
   capture.mutable_timings()->set_start_unix_us(start_unix_us);
   return frame;
 }
@@ -103,7 +116,7 @@ std::unique_ptr<llmfw::v1::Frame> startCapture(const CaptureBuildContext& ctx, s
 }  // namespace
 
 std::unique_ptr<llmfw::v1::Frame> buildTunnelCapture(const CaptureBuildContext& ctx, const TunnelObservation& tunnel) {
-  auto frame = startCapture(ctx, tunnel.connection_id, tunnel.connect_user_agent, tunnel.start_unix_us);
+  auto frame = startCapture(ctx, tunnel.connection_id, {}, tunnel.connect_user_agent, tunnel.start_unix_us);
   llmfw::v1::TunnelSummary& summary = *frame->mutable_capture()->mutable_tunnel();
   summary.set_host(std::string(tunnel.host));
   summary.set_port(tunnel.port);
@@ -116,7 +129,8 @@ std::unique_ptr<llmfw::v1::Frame> buildTunnelCapture(const CaptureBuildContext& 
 
 std::unique_ptr<llmfw::v1::Frame> buildDecryptedCapture(const CaptureBuildContext& ctx,
                                                         const DecryptedObservation& connection) {
-  auto frame = startCapture(ctx, connection.connection_id, connection.connect_user_agent, connection.start_unix_us);
+  auto frame = startCapture(ctx, connection.connection_id, connection.user_agent, connection.connect_user_agent,
+                            connection.start_unix_us);
   llmfw::v1::DecryptedConnection& summary = *frame->mutable_capture()->mutable_decrypted();
   summary.set_host(std::string(connection.host));
   summary.set_port(connection.port);
@@ -200,16 +214,7 @@ std::unique_ptr<llmfw::v1::Frame> ExchangeCaptureBuilder::finish(ExchangeOutcome
   llmfw::v1::Capture& capture = *frame_->mutable_capture();
   capture.set_capture_id(ctx_.counters.nextCaptureId());
   capture.mutable_http()->set_outcome(toProto(outcome));
-
-  const std::string& user_agent = request_user_agent_.empty() ? connection_.connect_user_agent : request_user_agent_;
-  ClientPathTag path = ctx_.classifier.classify(user_agent);
-  if (path == ClientPathTag::kUnknown) {
-    path = ctx_.classifier.classify(connection_.connect_user_agent);
-  }
-  llmfw::v1::ClientInfo& client = *capture.mutable_client();
-  client.set_path(toProto(path));
-  client.set_user_agent(user_agent);
-  client.set_connect_user_agent(connection_.connect_user_agent);
+  setClient(ctx_, *capture.mutable_client(), request_user_agent_, connection_.connect_user_agent);
   return std::move(frame_);
 }
 

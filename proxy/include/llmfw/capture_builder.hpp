@@ -50,6 +50,7 @@ struct DecryptedObservation {
   std::uint16_t port = 0;
   std::string_view alpn;  ///< Negotiated with the client; empty means HTTP/1.1.
   std::string_view connect_user_agent;
+  std::string_view user_agent;  ///< Sent by the client inside TLS; empty if none was seen.
   std::uint64_t bytes_client_to_server = 0;
   std::uint64_t bytes_server_to_client = 0;
   std::int64_t start_unix_us = 0;  ///< When the CONNECT arrived.
@@ -59,8 +60,9 @@ struct DecryptedObservation {
 };
 
 /// Builds a Capture{decrypted} for the connection as a whole. It holds no content.
-/// Takes the next capture id from ctx.counters. The client path comes from the CONNECT
-/// User-Agent, which is also copied into ClientInfo.user_agent.
+/// Takes the next capture id from ctx.counters. The client is the User-Agent sent
+/// inside TLS if there is one, otherwise the CONNECT's, classified by the rules; if
+/// that is UNKNOWN, by the CONNECT User-Agent.
 [[nodiscard]] std::unique_ptr<llmfw::v1::Frame> buildDecryptedCapture(const CaptureBuildContext& ctx,
                                                                       const DecryptedObservation& connection);
 
