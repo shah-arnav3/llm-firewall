@@ -169,8 +169,10 @@ void DecryptedRelay::finish() {
   finished_ = true;
   timer_.cancel();
   closeSockets();
+  std::string user_agent;
   if (observer_) {
     observer_->onClosed(end_);
+    user_agent = observer_->clientUserAgent();
     observer_.reset();
   }
   DecryptedObservation observation;
@@ -179,6 +181,7 @@ void DecryptedRelay::finish() {
   observation.port = info_.port;
   observation.alpn = info_.alpn;
   observation.connect_user_agent = info_.connect_user_agent;
+  observation.user_agent = user_agent;
   observation.bytes_client_to_server = c2s_.bytes;
   observation.bytes_server_to_client = s2c_.bytes;
   observation.start_unix_us = info_.started_unix_us;

@@ -210,7 +210,7 @@ class DecryptHarness {
   HostScope scope_;
   ProxyCounters counters_;
   CaptureQueue queue_{100, 1 << 20, counters_};
-  ClientClassifier classifier_{{{ClientPathTag::kUi, {"Electron/"}}}};
+  ClientClassifier classifier_{{{ClientPathTag::kClaudeCode, {"claude-cli/"}}, {ClientPathTag::kUi, {"Electron/"}}}};
   CaptureBuildContext build_{classifier_, counters_};
   TunnelRegistry tunnels_;
   std::string pac_;
@@ -301,7 +301,8 @@ TEST(DecryptPath, RecordsEachHttpExchangeBeforeTheConnection) {
   const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\nok";
   for (const std::string target : {"/api/one?token=abc", "/api/two"}) {
     asio::write(*client.stream, asio::buffer("GET " + target +
-                                             " HTTP/1.1\r\nHost: claude.ai\r\nCookie: session=secret\r\n\r\n"));
+                                             " HTTP/1.1\r\nHost: claude.ai\r\nUser-Agent: claude-cli/2\r\n"
+                                             "Cookie: session=secret\r\n\r\n"));
     std::string got(response.size(), '\0');
     asio::read(*client.stream, asio::buffer(got));
     EXPECT_EQ(got, response) << "the response reaches the client unchanged";
@@ -320,12 +321,16 @@ TEST(DecryptPath, RecordsEachHttpExchangeBeforeTheConnection) {
     EXPECT_EQ(http.response().body().total_bytes(), 2u);
     EXPECT_TRUE(http.response().body().omitted()) << "metadata_only keeps no body bytes";
     EXPECT_EQ(http.outcome(), llmfw::v1::EXCHANGE_OUTCOME_COMPLETE);
-    EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_UI) << "classified by the CONNECT User-Agent";
+    EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_CLAUDE_CODE);
     EXPECT_EQ(frame->SerializeAsString().find("secret"), std::string::npos) << "the cookie is redacted";
   }
   const auto connection = proxy.queue().popWait(milliseconds(3000));
   ASSERT_NE(connection, nullptr);
   EXPECT_EQ(connection->capture().payload_case(), llmfw::v1::Capture::kDecrypted);
+  EXPECT_EQ(connection->capture().client().path(), llmfw::v1::CLIENT_PATH_CLAUDE_CODE)
+      << "classified by the User-Agent inside TLS";
+  EXPECT_EQ(connection->capture().client().user_agent(), "claude-cli/2");
+  EXPECT_EQ(connection->capture().client().connect_user_agent(), kUserAgent);
   EXPECT_EQ(proxy.counters().http_parse_errors.load(), 0u);
 }
 

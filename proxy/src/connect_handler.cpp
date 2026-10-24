@@ -34,6 +34,7 @@ class Http1Capture final : public RelayObserver {
     tracker_.onUpstreamBytes(bytes, at);
   }
   void onClosed(ExchangeOutcomeTag unfinished) override { tracker_.onClosed(unfinished); }
+  [[nodiscard]] std::string clientUserAgent() const override { return tracker_.clientUserAgent(); }
 
  private:
   ExchangeConnection connection_;

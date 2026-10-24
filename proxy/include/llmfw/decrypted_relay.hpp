@@ -46,7 +46,8 @@ struct DecryptedConnectionInfo {
 ///     kClientAborted or kUpstreamAborted for the side that ended first (close()
 ///     counts as the client's side), or kTimeout after listen.idle_timeout.
 ///   - Once both connections are closed, pushes one Capture{decrypted}, after
-///     anything the observer pushed from onClosed.
+///     anything the observer pushed from onClosed. Its client is classified from
+///     the observer's clientUserAgent.
 /// Both streams must use the same strand as their executor, so the relay's state
 /// needs no locking.
 class DecryptedRelay final : public RegisteredConnection, public std::enable_shared_from_this<DecryptedRelay> {

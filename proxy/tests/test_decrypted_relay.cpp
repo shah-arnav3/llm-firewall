@@ -39,6 +39,7 @@ class RecordingObserver final : public RelayObserver {
     std::string upstream;
     std::optional<ExchangeOutcomeTag> outcome;
     int closed_calls = 0;
+    std::string user_agent;  ///< What clientUserAgent returns.
   };
 
   explicit RecordingObserver(std::shared_ptr<Seen> seen, std::shared_ptr<std::promise<void>> closed)
@@ -56,6 +57,7 @@ class RecordingObserver final : public RelayObserver {
       closed_->set_value();
     }
   }
+  [[nodiscard]] std::string clientUserAgent() const override { return seen_->user_agent; }
 
  private:
   std::shared_ptr<Seen> seen_;
@@ -339,6 +341,22 @@ TEST(DecryptedRelay, TheObserverSeesForwardedBytesAndTheClientsEnd) {
   EXPECT_EQ(seen.outcome, ExchangeOutcomeTag::kClientAborted);
   EXPECT_EQ(seen.closed_calls, 1);
   ASSERT_NE(h.queue().popWait(milliseconds(2000)), nullptr);
+}
+
+TEST(DecryptedRelay, TheObserversUserAgentClassifiesTheConnection) {
+  Harness h;
+  TestStream client = h.newClient();
+  TestStream origin = h.newOrigin();
+  Observed observed;
+  observed.seen->user_agent = "Mozilla/5.0 Electron/38";
+  h.open(client, origin, observed.observer());
+  client.lowest_layer().close();
+
+  observed.wait();
+  const auto frame = h.queue().popWait(milliseconds(2000));
+  ASSERT_NE(frame, nullptr);
+  EXPECT_EQ(frame->capture().client().user_agent(), "Mozilla/5.0 Electron/38");
+  EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_UI);
 }
 
 TEST(DecryptedRelay, TheObserverHearsWhenTheOriginEnds) {

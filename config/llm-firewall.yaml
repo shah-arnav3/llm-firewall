@@ -60,8 +60,9 @@ scope:
 # match means UNKNOWN. Web browser support is added later by adding a rule here
 # (e.g. path: WEB), without code changes.
 clients:
-  # Unconfirmed. The engine sends no User-Agent on CONNECT, so this cannot match a
-  # blind tunnel; its User-Agent is only visible inside TLS.
+  # The engine sends no User-Agent on CONNECT, so this matches only on decrypted
+  # connections, where its requests carry "claude-code/" or "claude-cli/". Its
+  # telemetry sends a generic "Bun/" User-Agent and stays UNKNOWN.
   - path: CLAUDE_CODE
     user_agent_contains: ["claude-cli/", "claude-code/"]
   # Confirmed: the app's CONNECT User-Agent contains both.
