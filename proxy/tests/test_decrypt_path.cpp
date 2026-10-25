@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -426,6 +427,11 @@ TEST(DecryptPath, AClientThatRejectsOurCertificateIsTunneledOnRetry) {
     ASSERT_EQ(readExactly(socket, kEstablished.size()), kEstablished);
     const TlsClient client(std::move(socket), *origin_pki.ca.cert);  // Does not trust our CA.
     EXPECT_TRUE(client.handshake_error);
+  }
+  // The client gives up as soon as it has sent its alert; wait for the proxy to read it.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (proxy.counters().client_tls_handshake_failures.load() == 0 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(milliseconds(5));
   }
   // The breaker is now open for claude.ai: the retry reaches the origin directly.
   tcp::socket socket = proxy.sendConnect("claude.ai:443");
