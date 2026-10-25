@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -332,6 +333,54 @@ TEST(DecryptPath, RecordsEachHttpExchangeBeforeTheConnection) {
   EXPECT_EQ(connection->capture().client().user_agent(), "claude-cli/2");
   EXPECT_EQ(connection->capture().client().connect_user_agent(), kUserAgent);
   EXPECT_EQ(proxy.counters().http_parse_errors.load(), 0u);
+}
+
+TEST(DecryptPath, RecordsEachWebSocketMessageAfterTheUpgrade) {
+  const Pki proxy_pki("llm-firewall local CA (proxy)");
+  const Pki origin_pki("origin CA");
+  const std::string switching =
+      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n";
+  const std::string server_frame = "\x81\x02hi";
+  Origin origin(origin_pki, switching + server_frame);
+  DecryptHarness proxy(proxy_pki, origin_pki, origin.endpoint());
+
+  tcp::socket socket = proxy.sendConnect("claude.ai:443");
+  ASSERT_EQ(readExactly(socket, kEstablished.size()), kEstablished);
+  TlsClient client(std::move(socket), *proxy_pki.ca.cert);
+  ASSERT_FALSE(client.handshake_error) << client.handshake_error.message();
+  asio::write(*client.stream, asio::buffer(std::string("GET /ws?token=abc HTTP/1.1\r\nHost: claude.ai\r\n"
+                                                       "Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n")));
+  std::string got(switching.size() + server_frame.size(), '\0');
+  asio::read(*client.stream, asio::buffer(got));
+  EXPECT_EQ(got, switching + server_frame);
+  // "yo!" masked with the key 01 02 03 04.
+  const std::string client_frame = "\x81\x83\x01\x02\x03\x04" + std::string{static_cast<char>('y' ^ 1), static_cast<char>('o' ^ 2), static_cast<char>('!' ^ 3)};
+  asio::write(*client.stream, asio::buffer(client_frame));
+  boost::system::error_code ignored;
+  client.stream->shutdown(ignored);
+
+  const auto upgrade = proxy.queue().popWait(milliseconds(3000));
+  ASSERT_NE(upgrade, nullptr);
+  ASSERT_EQ(upgrade->capture().payload_case(), llmfw::v1::Capture::kHttp);
+  EXPECT_EQ(upgrade->capture().http().outcome(), llmfw::v1::EXCHANGE_OUTCOME_UPGRADED);
+  // The two directions are decoded independently, so their messages can come in either order.
+  std::map<llmfw::v1::Direction, llmfw::v1::WebSocketMessage> messages;
+  for (int i = 0; i < 2; ++i) {
+    const auto frame = proxy.queue().popWait(milliseconds(3000));
+    ASSERT_NE(frame, nullptr);
+    ASSERT_EQ(frame->capture().payload_case(), llmfw::v1::Capture::kWebsocket);
+    EXPECT_EQ(frame->capture().websocket().upgrade_capture_id(), upgrade->capture().capture_id());
+    EXPECT_EQ(frame->capture().websocket().target(), "/ws?token=abc");
+    EXPECT_TRUE(frame->capture().websocket().omitted()) << "metadata_only keeps no payload";
+    messages[frame->capture().websocket().direction()] = frame->capture().websocket();
+  }
+  EXPECT_EQ(messages[llmfw::v1::DIRECTION_SERVER_TO_CLIENT].total_bytes(), 2u);
+  EXPECT_EQ(messages[llmfw::v1::DIRECTION_CLIENT_TO_SERVER].total_bytes(), 3u);
+  const auto connection = proxy.queue().popWait(milliseconds(3000));
+  ASSERT_NE(connection, nullptr);
+  EXPECT_EQ(connection->capture().payload_case(), llmfw::v1::Capture::kDecrypted);
+  EXPECT_EQ(proxy.counters().http_parse_errors.load(), 0u);
+  EXPECT_EQ(proxy.counters().ws_decode_errors.load(), 0u);
 }
 
 TEST(DecryptPath, TunnelsWhenTheOriginFailsVerification) {

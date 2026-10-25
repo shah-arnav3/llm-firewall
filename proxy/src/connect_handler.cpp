@@ -1,6 +1,7 @@
 #include "llmfw/connect_handler.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <string_view>
 
 #include <boost/asio/dispatch.hpp>
@@ -12,34 +13,61 @@
 #include "llmfw/log.hpp"
 #include "llmfw/pac.hpp"
 #include "llmfw/tls_breaker.hpp"
+#include "llmfw/websocket_tracker.hpp"
 
 namespace llmfw {
 
 namespace {
 
-/// Records the HTTP/1.1 exchanges of one decrypted connection: owns the connection
-/// facts the tracker refers to, pushes its captures and counts parse errors.
+/// Records the HTTP/1.1 exchanges of one decrypted connection, then the messages of a
+/// WebSocket it upgrades to: owns the connection facts the trackers refer to, pushes
+/// their captures and counts their errors.
 class Http1Capture final : public RelayObserver {
  public:
   Http1Capture(ExchangeConnection connection, ProxyContext& ctx)
-      : connection_(std::move(connection)),
+      : ctx_(ctx),
+        connection_(std::move(connection)),
         tracker_(ctx.build, ctx.config.capture, ctx.config.mode, connection_,
-                 ExchangeSinks{[&ctx](std::unique_ptr<llmfw::v1::Frame> frame) { (void)ctx.queue.tryPush(std::move(frame)); },
+                 ExchangeSinks{[this](std::unique_ptr<llmfw::v1::Frame> frame) { push(std::move(frame)); },
                                [&ctx] { ctx.counters.http_parse_errors.fetch_add(1, std::memory_order_relaxed); },
-                               {}}) {}
+                               [this](UpgradeHandoff handoff) { startWebSocket(std::move(handoff)); }}) {}
 
   void onClientBytes(std::span<const std::uint8_t> bytes, Clock::time_point at) override {
-    tracker_.onClientBytes(bytes, at);
+    if (websocket_) {
+      websocket_->onClientBytes(bytes, at);
+    } else {
+      tracker_.onClientBytes(bytes, at);
+    }
   }
   void onUpstreamBytes(std::span<const std::uint8_t> bytes, Clock::time_point at) override {
-    tracker_.onUpstreamBytes(bytes, at);
+    if (websocket_) {
+      websocket_->onUpstreamBytes(bytes, at);
+    } else {
+      tracker_.onUpstreamBytes(bytes, at);
+    }
   }
   void onClosed(ExchangeOutcomeTag unfinished) override { tracker_.onClosed(unfinished); }
   [[nodiscard]] std::string clientUserAgent() const override { return tracker_.clientUserAgent(); }
 
  private:
+  void push(std::unique_ptr<llmfw::v1::Frame> frame) { (void)ctx_.queue.tryPush(std::move(frame)); }
+
+  void startWebSocket(UpgradeHandoff handoff) {
+    websocket_.emplace(ctx_.build, ctx_.config.capture, ctx_.config.mode, std::move(handoff.connection),
+                       WebSocketSinks{[this](std::unique_ptr<llmfw::v1::Frame> frame) { push(std::move(frame)); },
+                                      [this] { ctx_.counters.ws_decode_errors.fetch_add(1, std::memory_order_relaxed); }});
+    if (!handoff.client_bytes.empty()) {
+      websocket_->onClientBytes(handoff.client_bytes, handoff.client_bytes_at);
+    }
+    if (!handoff.upstream_bytes.empty()) {
+      websocket_->onUpstreamBytes(handoff.upstream_bytes, handoff.upstream_bytes_at);
+    }
+  }
+
+  ProxyContext& ctx_;
   ExchangeConnection connection_;
   Http1ExchangeTracker tracker_;
+  std::optional<WebSocketTracker> websocket_;
 };
 
 /// The observer for a decrypted connection, or null for a protocol that is not parsed.

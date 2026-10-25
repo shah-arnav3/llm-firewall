@@ -442,7 +442,8 @@ and never records content. By default it blind-tunnels every CONNECT, with one r
 per connection. With `proxy.decrypt: true` it decrypts the scoped hosts its leaf
 certificate covers and relays them byte for byte, and it also parses the HTTP/1.1
 inside: each request and its response get an `"http"` record with the method, the
-path without its query string, the status, timings and body sizes.
+path without its query string, the status, timings and body sizes. After a WebSocket
+upgrade, each message gets a `"websocket"` record with its direction, opcode and size.
 `llmfw-setup profile` writes the configuration profile that points Claude at it, and
 `llmfw-setup certs` creates the certificates that decryption will use, and
 `llmfw-setup trust` trusts the CA in the login Keychain. Installing (LaunchAgents) and
