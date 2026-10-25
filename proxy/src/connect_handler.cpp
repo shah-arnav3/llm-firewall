@@ -25,7 +25,8 @@ class Http1Capture final : public RelayObserver {
       : connection_(std::move(connection)),
         tracker_(ctx.build, ctx.config.capture, ctx.config.mode, connection_,
                  ExchangeSinks{[&ctx](std::unique_ptr<llmfw::v1::Frame> frame) { (void)ctx.queue.tryPush(std::move(frame)); },
-                               [&ctx] { ctx.counters.http_parse_errors.fetch_add(1, std::memory_order_relaxed); }}) {}
+                               [&ctx] { ctx.counters.http_parse_errors.fetch_add(1, std::memory_order_relaxed); },
+                               {}}) {}
 
   void onClientBytes(std::span<const std::uint8_t> bytes, Clock::time_point at) override {
     tracker_.onClientBytes(bytes, at);

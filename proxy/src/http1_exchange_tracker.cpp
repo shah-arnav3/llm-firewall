@@ -1,8 +1,42 @@
 #include "llmfw/http1_exchange_tracker.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace llmfw {
+
+namespace {
+
+bool equalsIgnoreCase(std::string_view a, std::string_view b) {
+  return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+           return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
+         });
+}
+
+/// Whether the Upgrade header names websocket, which it does as a single token in practice.
+bool asksForWebSocket(const Http1Head& head) {
+  for (const auto& [name, value] : head.headers) {
+    if (equalsIgnoreCase(name, "upgrade") && equalsIgnoreCase(value, "websocket")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string headerValue(const google::protobuf::RepeatedPtrField<llmfw::v1::Header>& headers,
+                        std::string_view name) {
+  for (const llmfw::v1::Header& header : headers) {
+    if (equalsIgnoreCase(header.name(), name)) {
+      return header.value();
+    }
+  }
+  return {};
+}
+
+}  // namespace
 
 class Http1ExchangeTracker::RequestEvents final : public Http1Events {
  public:
@@ -14,6 +48,7 @@ class Http1ExchangeTracker::RequestEvents final : public Http1Events {
     exchange.builder = std::make_unique<ExchangeCaptureBuilder>(t_.ctx_, t_.cfg_, t_.mode_, t_.connection_,
                                                                 t_.next_exchange_index_++, started, unixMicros(started));
     exchange.builder->setRequestHead(head);
+    exchange.websocket = head.upgrade && asksForWebSocket(head);
     if (t_.client_user_agent_.empty()) {
       t_.client_user_agent_ = exchange.builder->requestUserAgent();
     }
@@ -132,7 +167,16 @@ void Http1ExchangeTracker::onUpstreamBytes(std::span<const std::uint8_t> bytes, 
   if (!response_started_at_) {
     response_started_at_ = at;
   }
-  handle(response_parser_.feed(bytes));
+  const FeedResult result = response_parser_.feed(bytes);
+  handle(result);
+  if (result.status == FeedStatus::kUpgrade && upgrade_ && sinks_.upgraded) {
+    const std::span<const std::uint8_t> rest = bytes.subspan(result.consumed);
+    UpgradeHandoff handoff{std::move(*upgrade_), std::move(held_), request_chunk_at_, {rest.begin(), rest.end()}, at};
+    upgrade_.reset();
+    held_.clear();
+    sinks_.upgraded(std::move(handoff));
+    return;
+  }
   if (capturing_ && resume_requests_) {
     resume_requests_ = false;
     upgrade_pending_ = false;
@@ -178,8 +222,23 @@ void Http1ExchangeTracker::finishFront(ExchangeOutcomeTag outcome) {
     request_open_ = false;
   }
   std::unique_ptr<ExchangeCaptureBuilder> builder = std::move(in_flight_.front().builder);
+  const bool websocket = in_flight_.front().websocket;
   in_flight_.pop_front();
-  sinks_.push(builder->finish(outcome));
+  std::unique_ptr<llmfw::v1::Frame> frame = builder->finish(outcome);
+  if (outcome == ExchangeOutcomeTag::kUpgraded && websocket) {
+    const llmfw::v1::Capture& capture = frame->capture();
+    const llmfw::v1::HttpExchange& http = capture.http();
+    WebSocketConnection& ws = upgrade_.emplace();
+    ws.connection_id = capture.connection_id();
+    ws.exchange_index = capture.exchange_index();
+    ws.upgrade_capture_id = capture.capture_id();
+    ws.host = http.request().host().empty() ? connection_.connect_host : http.request().host();
+    ws.target = http.request().target();
+    ws.negotiated_extensions = headerValue(http.response().headers(), "sec-websocket-extensions");
+    ws.user_agent = capture.client().user_agent();
+    ws.connect_user_agent = connection_.connect_user_agent;
+  }
+  sinks_.push(std::move(frame));
 }
 
 void Http1ExchangeTracker::stop(ExchangeOutcomeTag outcome) {

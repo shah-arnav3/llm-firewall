@@ -17,12 +17,24 @@
 
 namespace llmfw {
 
+/// What an Http1ExchangeTracker hands on when a 101 accepts a WebSocket upgrade.
+struct UpgradeHandoff {
+  WebSocketConnection connection;  ///< From the upgrade exchange, as it was pushed.
+  std::vector<std::uint8_t> client_bytes;  ///< Client bytes sent after the upgrade request.
+  Clock::time_point client_bytes_at{};     ///< When the last of them was read.
+  std::vector<std::uint8_t> upstream_bytes;  ///< Origin bytes after the 101 in the same chunk.
+  Clock::time_point upstream_bytes_at{};
+};
+
 /// Where an Http1ExchangeTracker sends what it produces.
 struct ExchangeSinks {
   /// Each finished exchange, in the order the exchanges finish.
   std::function<void(std::unique_ptr<llmfw::v1::Frame>)> push;
   /// Called once when either direction stops parsing as HTTP/1.1.
   std::function<void()> parse_error;
+  /// Called once, after the upgrade exchange is pushed, when a 101 accepts a request
+  /// whose Upgrade header names websocket. May be empty.
+  std::function<void(UpgradeHandoff)> upgraded;
 };
 
 /// Parses each direction with its own Http1Parser and pairs requests with responses
@@ -36,7 +48,8 @@ struct ExchangeSinks {
 ///     with kParseError, parse_error is called, and nothing more is recorded.
 ///   - Upgrades: after an Upgrade request, client bytes are held back from the request
 ///     parser (up to kMaxHeldUpgradeBytes) until its response arrives. A 101 pushes
-///     that exchange with kUpgraded, and nothing more is recorded. Any other final
+///     that exchange with kUpgraded, and nothing more is recorded; a WebSocket upgrade
+///     is handed to sinks.upgraded with the bytes that follow it. Any other final
 ///     response means the server refused, so parsing resumes with the held bytes.
 ///     More than kMaxHeldUpgradeBytes while waiting counts as a framing error.
 ///   - onClosed completes a response delimited by the close, then pushes every
@@ -64,6 +77,7 @@ class Http1ExchangeTracker final : public RelayObserver {
     std::unique_ptr<ExchangeCaptureBuilder> builder;
     bool request_complete = false;
     bool response_started = false;
+    bool websocket = false;  ///< The request's Upgrade header names websocket.
   };
 
   void feedRequests(std::span<const std::uint8_t> bytes);
@@ -92,6 +106,8 @@ class Http1ExchangeTracker final : public RelayObserver {
   /// The upgrade was refused: resume the request parser once the response feed returns.
   bool resume_requests_ = false;
   std::vector<std::uint8_t> held_;
+  /// Set when a WebSocket upgrade exchange is pushed, until the handoff.
+  std::optional<WebSocketConnection> upgrade_;
   /// When the bytes being parsed in each direction arrived. A message starts at the
   /// first chunk read after the previous message in its direction ended.
   Clock::time_point request_chunk_at_{};

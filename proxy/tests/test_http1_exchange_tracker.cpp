@@ -26,11 +26,16 @@ struct TrackerFixture {
   ExchangeConnection connection{7, "api.anthropic.com", 443, "", "", {}, {}};
   std::vector<std::unique_ptr<llmfw::v1::Frame>> pushed;
   int parse_errors = 0;
+  std::vector<UpgradeHandoff> handoffs;
   Http1ExchangeTracker tracker{ctx, cfg, CaptureMode::kMetadataOnly, connection,
                                ExchangeSinks{[this](std::unique_ptr<llmfw::v1::Frame> frame) {
                                                pushed.push_back(std::move(frame));
                                              },
-                                             [this] { ++parse_errors; }}};
+                                             [this] { ++parse_errors; },
+                                             [this](UpgradeHandoff handoff) {
+                                               EXPECT_EQ(pushed.size(), 1u) << "the upgrade is pushed first";
+                                               handoffs.push_back(std::move(handoff));
+                                             }}};
   Clock::time_point t0 = Clock::now();
 
   void client(std::string_view text, milliseconds after = {}) { tracker.onClientBytes(bytesOf(text), t0 + after); }
@@ -186,6 +191,44 @@ TEST(Http1ExchangeTracker, ASwitchingResponsePushesTheUpgradeAndStopsRecording) 
   f.tracker.onClosed(ExchangeOutcomeTag::kClientAborted);
   EXPECT_EQ(f.pushed.size(), 1u);
   EXPECT_EQ(f.parse_errors, 0);
+}
+
+std::vector<std::uint8_t> bytesVector(std::string_view text) { return {text.begin(), text.end()}; }
+
+TEST(Http1ExchangeTracker, AnAcceptedWebSocketUpgradeHandsOnTheBytesAfterIt) {
+  TrackerFixture f;
+  f.client("GET /ws?x=1 HTTP/1.1\r\nHost: a\r\nUser-Agent: claude-cli/2\r\nUpgrade: WebSocket\r\n"
+           "Connection: Upgrade\r\n\r\nC1");
+  f.client("C2", milliseconds(5));
+  f.upstream("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+             "Sec-WebSocket-Extensions: permessage-deflate\r\n\r\nS1",
+             milliseconds(9));
+  ASSERT_EQ(f.pushed.size(), 1u);
+  ASSERT_EQ(f.handoffs.size(), 1u);
+  const UpgradeHandoff& handoff = f.handoffs[0];
+  EXPECT_EQ(handoff.connection.connection_id, 7u);
+  EXPECT_EQ(handoff.connection.exchange_index, 0u);
+  EXPECT_EQ(handoff.connection.upgrade_capture_id, f.pushed[0]->capture().capture_id());
+  EXPECT_EQ(handoff.connection.host, "a");
+  EXPECT_EQ(handoff.connection.target, "/ws?x=1");
+  EXPECT_EQ(handoff.connection.negotiated_extensions, "permessage-deflate");
+  EXPECT_EQ(handoff.connection.user_agent, "claude-cli/2");
+  EXPECT_EQ(handoff.client_bytes, bytesVector("C1C2"));
+  EXPECT_EQ(handoff.client_bytes_at, f.t0 + milliseconds(5));
+  EXPECT_EQ(handoff.upstream_bytes, bytesVector("S1"));
+  EXPECT_EQ(handoff.upstream_bytes_at, f.t0 + milliseconds(9));
+  f.client("more");
+  f.upstream("more");
+  EXPECT_EQ(f.handoffs.size(), 1u);
+}
+
+TEST(Http1ExchangeTracker, AnotherProtocolsUpgradeIsNotHandedOn) {
+  TrackerFixture f;
+  f.client("GET / HTTP/1.1\r\nHost: a\r\nUpgrade: h2c\r\nConnection: Upgrade\r\n\r\n");
+  f.upstream("HTTP/1.1 101 Switching Protocols\r\nUpgrade: h2c\r\nConnection: Upgrade\r\n\r\n");
+  ASSERT_EQ(f.pushed.size(), 1u);
+  EXPECT_EQ(f.http(0).outcome(), llmfw::v1::EXCHANGE_OUTCOME_UPGRADED);
+  EXPECT_TRUE(f.handoffs.empty());
 }
 
 TEST(Http1ExchangeTracker, ARefusedUpgradeResumesWithTheHeldBytes) {
