@@ -30,6 +30,7 @@ void ProxyCounters::snapshotInto(llmfw::v1::ProxyStats& out, const std::string& 
   out.set_tunnels_client_tls_breaker(load(tunnels_client_tls_breaker));
   out.set_client_tls_handshake_failures(load(client_tls_handshake_failures));
   out.set_http_parse_errors(load(http_parse_errors));
+  out.set_ws_decode_errors(load(ws_decode_errors));
   out.set_non_connect_requests_rejected(load(non_connect_requests_rejected));
   out.set_queue_high_watermark_items(load(queue_high_watermark_items));
   out.set_connections_decrypted(load(connections_decrypted));

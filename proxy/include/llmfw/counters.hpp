@@ -28,6 +28,7 @@ struct ProxyCounters {
   std::atomic<std::uint64_t> tunnels_client_tls_breaker{0};
   std::atomic<std::uint64_t> client_tls_handshake_failures{0};
   std::atomic<std::uint64_t> http_parse_errors{0};
+  std::atomic<std::uint64_t> ws_decode_errors{0};
   std::atomic<std::uint64_t> non_connect_requests_rejected{0};
   std::atomic<std::uint64_t> queue_high_watermark_items{0};
   std::atomic<std::uint64_t> connections_decrypted{0};

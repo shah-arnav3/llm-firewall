@@ -41,7 +41,7 @@ void logSummary(const ProxyCounters& c) {
           " tunnels_upstream_verify_failed=" + v(c.tunnels_upstream_verify_failed) +
           " tunnels_client_tls_breaker=" + v(c.tunnels_client_tls_breaker) +
           " client_tls_handshake_failures=" + v(c.client_tls_handshake_failures) +
-          " http_parse_errors=" + v(c.http_parse_errors) +
+          " http_parse_errors=" + v(c.http_parse_errors) + " ws_decode_errors=" + v(c.ws_decode_errors) +
           " non_connect_requests_rejected=" + v(c.non_connect_requests_rejected) +
           " captures_created=" + v(c.captures_created) +
           " captures_dropped_queue_full=" + v(c.captures_dropped_queue_full) +
