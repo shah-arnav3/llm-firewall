@@ -47,6 +47,29 @@ std::vector<std::string> queryKeys(std::string_view query) {
   return keys;
 }
 
+/// Sets path to the target without its query string, and query_keys to its parameter names.
+void setPathAndQueryKeys(llmfw::v1::MetadataRecord& record, std::string_view target) {
+  const std::size_t query = target.find('?');
+  record.set_path(std::string(target.substr(0, query)));
+  if (query != std::string_view::npos) {
+    for (const std::string& key : queryKeys(target.substr(query + 1))) {
+      record.add_query_keys(key);
+    }
+  }
+}
+
+std::string wsOpcodeName(llmfw::v1::WsOpcode opcode) {
+  switch (opcode) {
+    case llmfw::v1::WS_OPCODE_TEXT: return "text";
+    case llmfw::v1::WS_OPCODE_BINARY: return "binary";
+    case llmfw::v1::WS_OPCODE_CLOSE: return "close";
+    case llmfw::v1::WS_OPCODE_PING: return "ping";
+    case llmfw::v1::WS_OPCODE_PONG: return "pong";
+    default: break;
+  }
+  return "";
+}
+
 bool isContentType(const llmfw::v1::Header& header) {
   return !header.redacted() && header.name().size() == 12 &&
          std::equal(header.name().begin(), header.name().end(), "content-type",
@@ -99,14 +122,7 @@ llmfw::v1::MetadataRecord toMetadataRecord(const llmfw::v1::Capture& capture, co
       record.set_host(http.request().host().empty() ? http.connect_host() : http.request().host());
       record.set_alpn(http.negotiated_alpn());
       record.set_method(http.request().method());
-      const std::string_view target = http.request().target();
-      const std::size_t query = target.find('?');
-      record.set_path(std::string(target.substr(0, query)));
-      if (query != std::string_view::npos) {
-        for (const std::string& key : queryKeys(target.substr(query + 1))) {
-          record.add_query_keys(key);
-        }
-      }
+      setPathAndQueryKeys(record, http.request().target());
       record.set_status(http.response().status());
       const bool content_type_allowed = std::find(allowed.begin(), allowed.end(), "content-type") != allowed.end();
       for (const llmfw::v1::Header& header : http.request().headers()) {
@@ -126,7 +142,18 @@ llmfw::v1::MetadataRecord toMetadataRecord(const llmfw::v1::Capture& capture, co
       record.set_outcome(http.outcome());
       break;
     }
-    case llmfw::v1::Capture::kWebsocket: record.set_kind("websocket"); break;
+    case llmfw::v1::Capture::kWebsocket: {
+      const llmfw::v1::WebSocketMessage& ws = capture.websocket();
+      record.set_kind("websocket");
+      record.set_host(ws.host());
+      setPathAndQueryKeys(record, ws.target());
+      record.set_ws_direction(ws.direction() == llmfw::v1::DIRECTION_CLIENT_TO_SERVER   ? "client_to_server"
+                              : ws.direction() == llmfw::v1::DIRECTION_SERVER_TO_CLIENT ? "server_to_client"
+                                                                                         : "");
+      record.set_ws_opcode(wsOpcodeName(ws.opcode()));
+      record.set_ws_payload_bytes(ws.total_bytes());
+      break;
+    }
     case llmfw::v1::Capture::PAYLOAD_NOT_SET: break;
   }
   return record;

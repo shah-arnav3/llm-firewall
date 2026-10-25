@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <sys/stat.h>
@@ -143,6 +144,45 @@ TEST(ToMetadataRecord, NeverCopiesBodyOrHeaderValues) {
   header.set_value("SECRET-HEADER");
   const std::string serialized = toMetadataRecord(capture, logConfig("unused"), "i").SerializeAsString();
   EXPECT_EQ(serialized.find("SECRET"), std::string::npos);
+}
+
+TEST(ToMetadataRecord, MapsWebSocketMessages) {
+  llmfw::v1::Capture capture;
+  capture.set_exchange_index(2);
+  llmfw::v1::WebSocketMessage& ws = *capture.mutable_websocket();
+  ws.set_host("api.anthropic.com");
+  ws.set_target("/v1/sessions/ws?token=SECRET-QUERY&v=2");
+  ws.set_direction(llmfw::v1::DIRECTION_SERVER_TO_CLIENT);
+  ws.set_opcode(llmfw::v1::WS_OPCODE_BINARY);
+  ws.set_payload("SECRET-PAYLOAD");
+  ws.set_total_bytes(900);
+  const llmfw::v1::MetadataRecord record = toMetadataRecord(capture, logConfig("unused"), "i");
+  EXPECT_EQ(record.kind(), "websocket");
+  EXPECT_EQ(record.exchange_index(), 2u);
+  EXPECT_EQ(record.host(), "api.anthropic.com");
+  EXPECT_EQ(record.path(), "/v1/sessions/ws");
+  EXPECT_EQ(std::vector<std::string>(record.query_keys().begin(), record.query_keys().end()),
+            (std::vector<std::string>{"token", "v"}));
+  EXPECT_EQ(record.ws_direction(), "server_to_client");
+  EXPECT_EQ(record.ws_opcode(), "binary");
+  EXPECT_EQ(record.ws_payload_bytes(), 900u);
+  EXPECT_EQ(record.SerializeAsString().find("SECRET"), std::string::npos);
+}
+
+TEST(ToMetadataRecord, NamesEveryWebSocketDirectionAndOpcode) {
+  const MetadataLogConfig cfg = logConfig("unused");
+  llmfw::v1::Capture capture;
+  capture.mutable_websocket()->set_direction(llmfw::v1::DIRECTION_CLIENT_TO_SERVER);
+  EXPECT_EQ(toMetadataRecord(capture, cfg, "i").ws_direction(), "client_to_server");
+  const std::vector<std::pair<llmfw::v1::WsOpcode, std::string>> opcodes = {
+      {llmfw::v1::WS_OPCODE_TEXT, "text"}, {llmfw::v1::WS_OPCODE_BINARY, "binary"},
+      {llmfw::v1::WS_OPCODE_CLOSE, "close"}, {llmfw::v1::WS_OPCODE_PING, "ping"},
+      {llmfw::v1::WS_OPCODE_PONG, "pong"},   {llmfw::v1::WS_OPCODE_UNSPECIFIED, ""},
+  };
+  for (const auto& [opcode, name] : opcodes) {
+    capture.mutable_websocket()->set_opcode(opcode);
+    EXPECT_EQ(toMetadataRecord(capture, cfg, "i").ws_opcode(), name);
+  }
 }
 
 llmfw::v1::Capture httpCapture() {

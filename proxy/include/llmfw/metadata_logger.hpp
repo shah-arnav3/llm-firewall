@@ -26,8 +26,9 @@ namespace llmfw {
 ///     names only), status, header names, request_bytes / response_bytes (body sizes)
 ///     and outcome. The request and response Content-Type values only if
 ///     "content-type" is in cfg.logged_header_values.
-/// WebSocket records hold only the fields every capture gets. Body data, query values
-/// and other header values are never read.
+///   - WebSocket: host, path and query_keys of the upgrade target, ws_direction,
+///     ws_opcode and ws_payload_bytes (the message's size).
+/// Body data, WebSocket payloads, query values and other header values are never read.
 [[nodiscard]] llmfw::v1::MetadataRecord toMetadataRecord(const llmfw::v1::Capture& capture,
                                                          const MetadataLogConfig& cfg,
                                                          const std::string& proxy_instance_id);

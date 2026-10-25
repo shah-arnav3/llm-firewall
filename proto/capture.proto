@@ -258,7 +258,7 @@ message MetadataRecord {
   uint64 capture_id = 2;
   uint64 connection_id = 3;
   uint32 exchange_index = 4;
-  string kind = 5;                  // "http" | "websocket" | "tunnel"
+  string kind = 5;                  // "http" | "websocket" | "tunnel" | "decrypted"
   // Explicit presence, so the JSON line names the path even when it is UNKNOWN.
   optional ClientPath client_path = 6;
   string user_agent = 7;
@@ -279,8 +279,8 @@ message MetadataRecord {
   // Open client connections to the same host when this exchange started.
   // Used to measure HTTP/1.1 stalls caused by the 6-connections-per-host limit.
   uint32 concurrent_connections_same_host = 22;
-  string ws_direction = 23;
-  uint64 ws_payload_bytes = 24;
+  string ws_direction = 23;         // "client_to_server" | "server_to_client"
+  uint64 ws_payload_bytes = 24;     // The whole message's size, including bytes past the cap.
   uint64 tunnel_duration_us = 25;   // How long a tunnel stayed open.
   // Decrypted connections (kind "decrypted"); request_bytes and response_bytes hold
   // the decrypted bytes each way.
@@ -288,4 +288,5 @@ message MetadataRecord {
   uint64 upstream_connect_us = 27;
   uint64 client_handshake_us = 28;
   uint64 connection_duration_us = 29;
+  string ws_opcode = 30;            // "text" | "binary" | "close" | "ping" | "pong"
 }
