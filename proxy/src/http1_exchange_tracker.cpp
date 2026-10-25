@@ -1,20 +1,8 @@
 #include "llmfw/http1_exchange_tracker.hpp"
 
-#include <chrono>
 #include <utility>
 
 namespace llmfw {
-
-namespace {
-
-/// The wall-clock time, in Unix microseconds, at which steady time `at` happened.
-std::int64_t unixMicros(Clock::time_point at) {
-  const auto ago = std::chrono::duration_cast<std::chrono::system_clock::duration>(Clock::now() - at);
-  return std::chrono::duration_cast<std::chrono::microseconds>((std::chrono::system_clock::now() - ago).time_since_epoch())
-      .count();
-}
-
-}  // namespace
 
 class Http1ExchangeTracker::RequestEvents final : public Http1Events {
  public:

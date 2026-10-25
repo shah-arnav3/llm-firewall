@@ -85,7 +85,8 @@ add_library(llmfw_core STATIC
   src/tls_client.cpp
   src/tls_server.cpp
   src/trust_verifier.cpp
-  src/websocket.cpp)
+  src/websocket.cpp
+  src/websocket_tracker.cpp)
 target_include_directories(llmfw_core
   PUBLIC  include
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen-pac)
@@ -147,7 +148,8 @@ if (LLMFW_BUILD_TESTS)
     tests/test_tls_server.cpp
     tests/test_trust_verifier.cpp
     tests/test_tunnel_registry.cpp
-    tests/test_websocket_frame.cpp)
+    tests/test_websocket_frame.cpp
+    tests/test_websocket_tracker.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_setup_core GTest::gtest_main)
   # The config and PAC tests read the committed files in config/.
   target_compile_definitions(llmfw-tests PRIVATE LLMFW_REPO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")
