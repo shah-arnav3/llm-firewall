@@ -41,8 +41,9 @@ struct DecryptedConnectionInfo {
 ///     passed on as close_notify to the other; any other end (an error, a truncated
 ///     TLS stream, close(), or no bytes either way for listen.idle_timeout) closes both
 ///     connections at once. Closing is bounded: after kCloseGrace both are closed anyway.
-///   - Hands every chunk it has forwarded to the observer, if there is one, and
-///     calls its onClosed once both connections are closed. The outcome passed is
+///   - Hands every chunk to the observer, if there is one: client chunks once read,
+///     origin chunks once forwarded (see RelayObserver). Calls its onClosed once
+///     both connections are closed. The outcome passed is
 ///     kClientAborted or kUpstreamAborted for the side that ended first (close()
 ///     counts as the client's side), or kTimeout after listen.idle_timeout.
 ///   - Once both connections are closed, pushes one Capture{decrypted}, after

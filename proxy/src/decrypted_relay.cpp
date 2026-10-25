@@ -66,12 +66,18 @@ void DecryptedRelay::pump(Direction& dir) {
         }
         self->armTimer(self->ctx_.config.listen.idle_timeout);
         dir.read_at = Clock::now();
+        // Seen before it is forwarded, so a request always reaches the observer before
+        // the response it causes: write completions in the two directions can run in
+        // either order.
+        if (dir.from_client && self->observer_) {
+          self->observe(dir, n);
+        }
         dir.busy = true;
         asio::async_write(dir.to, asio::buffer(dir.buffer.data(), n),
                           [self, &dir](const boost::system::error_code& write_ec, std::size_t written) {
                             dir.busy = false;
                             dir.bytes += written;
-                            if (!write_ec && self->observer_) {
+                            if (!write_ec && !dir.from_client && self->observer_) {
                               self->observe(dir, written);
                             }
                             if (self->closing_) {

@@ -40,6 +40,8 @@ class RecordingObserver final : public RelayObserver {
     std::optional<ExchangeOutcomeTag> outcome;
     int closed_calls = 0;
     std::string user_agent;  ///< What clientUserAgent returns.
+    std::promise<void> client_seen;  ///< Set at the first onClientBytes.
+    bool client_seen_set = false;
   };
 
   explicit RecordingObserver(std::shared_ptr<Seen> seen, std::shared_ptr<std::promise<void>> closed)
@@ -47,6 +49,10 @@ class RecordingObserver final : public RelayObserver {
 
   void onClientBytes(std::span<const std::uint8_t> bytes, Clock::time_point /*at*/) override {
     seen_->client.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    if (!seen_->client_seen_set) {
+      seen_->client_seen_set = true;
+      seen_->client_seen.set_value();
+    }
   }
   void onUpstreamBytes(std::span<const std::uint8_t> bytes, Clock::time_point /*at*/) override {
     seen_->upstream.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
@@ -341,6 +347,22 @@ TEST(DecryptedRelay, TheObserverSeesForwardedBytesAndTheClientsEnd) {
   EXPECT_EQ(seen.outcome, ExchangeOutcomeTag::kClientAborted);
   EXPECT_EQ(seen.closed_calls, 1);
   ASSERT_NE(h.queue().popWait(milliseconds(2000)), nullptr);
+}
+
+TEST(DecryptedRelay, TheObserverSeesClientBytesBeforeTheOriginDoes) {
+  Harness h;
+  TestStream client = h.newClient();
+  TestStream origin = h.newOrigin();
+  Observed observed;
+  std::future<void> client_seen = observed.seen->client_seen.get_future();
+  h.open(client, origin, observed.observer());
+
+  asio::write(client, asio::buffer(std::string("GET / HTTP/1.1\r\n\r\n")));
+  EXPECT_EQ(readExactly(origin, 18), "GET / HTTP/1.1\r\n\r\n");
+  // So a response the origin sends now can never reach the observer before its request.
+  EXPECT_EQ(client_seen.wait_for(std::chrono::seconds(0)), std::future_status::ready);
+  client.lowest_layer().close();
+  observed.wait();
 }
 
 TEST(DecryptedRelay, TheObserversUserAgentClassifiesTheConnection) {
