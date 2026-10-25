@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -393,6 +394,99 @@ TEST(ApproximateFrameBytes, IsTheSerializedSize) {
   ProxyCounters counters;
   const auto frame = buildTunnelCapture({classifier, counters}, sampleTunnel());
   EXPECT_EQ(approximateFrameBytes(*frame), frame->SerializeAsString().size());
+}
+
+
+WebSocketConnection sampleWebSocket() {
+  WebSocketConnection ws;
+  ws.connection_id = 44;
+  ws.exchange_index = 2;
+  ws.upgrade_capture_id = 17;
+  ws.host = "api.anthropic.com";
+  ws.target = "/v1/sessions/ws?token=t";
+  ws.negotiated_extensions = "permessage-deflate";
+  ws.user_agent = "claude-cli/2";
+  ws.connect_user_agent = "";
+  return ws;
+}
+
+WsMessage sampleMessage() {
+  WsMessage m;
+  m.opcode = ws_opcode::kText;
+  m.payload = {'h', 'i'};
+  m.total_bytes = 5;
+  m.truncated = true;
+  m.compressed = true;
+  return m;
+}
+
+TEST(BuildWebSocketCapture, CopiesTheMessageAndItsConnection) {
+  const ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  const auto frame = buildWebSocketCapture({classifier, counters}, CaptureMode::kFull, sampleWebSocket(),
+                                           WsSender::kServer, 3, sampleMessage(), 1'790'000'000'000'000);
+  const llmfw::v1::Capture& capture = frame->capture();
+  EXPECT_EQ(capture.capture_id(), 1u);
+  EXPECT_EQ(capture.connection_id(), 44u);
+  EXPECT_EQ(capture.exchange_index(), 2u);
+  EXPECT_EQ(capture.timings().start_unix_us(), 1'790'000'000'000'000);
+  EXPECT_EQ(capture.client().path(), llmfw::v1::CLIENT_PATH_CLAUDE_CODE);
+  ASSERT_EQ(capture.payload_case(), llmfw::v1::Capture::kWebsocket);
+  const llmfw::v1::WebSocketMessage& ws = capture.websocket();
+  EXPECT_EQ(ws.upgrade_capture_id(), 17u);
+  EXPECT_EQ(ws.host(), "api.anthropic.com");
+  EXPECT_EQ(ws.target(), "/v1/sessions/ws?token=t");
+  EXPECT_EQ(ws.negotiated_extensions(), "permessage-deflate");
+  EXPECT_EQ(ws.direction(), llmfw::v1::DIRECTION_SERVER_TO_CLIENT);
+  EXPECT_EQ(ws.opcode(), llmfw::v1::WS_OPCODE_TEXT);
+  EXPECT_EQ(ws.message_index(), 3u);
+  EXPECT_EQ(ws.payload(), "hi");
+  EXPECT_EQ(ws.total_bytes(), 5u);
+  EXPECT_TRUE(ws.truncated());
+  EXPECT_TRUE(ws.compressed());
+  EXPECT_FALSE(ws.omitted());
+}
+
+TEST(BuildWebSocketCapture, MetadataOnlyOmitsThePayload) {
+  const ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  const auto frame = buildWebSocketCapture({classifier, counters}, CaptureMode::kMetadataOnly, sampleWebSocket(),
+                                           WsSender::kClient, 0, sampleMessage(), 0);
+  const llmfw::v1::WebSocketMessage& ws = frame->capture().websocket();
+  EXPECT_EQ(ws.direction(), llmfw::v1::DIRECTION_CLIENT_TO_SERVER);
+  EXPECT_TRUE(ws.omitted());
+  EXPECT_TRUE(ws.payload().empty());
+  EXPECT_FALSE(ws.truncated());
+  EXPECT_EQ(ws.total_bytes(), 5u);
+}
+
+TEST(BuildWebSocketCapture, MapsEveryOpcode) {
+  const ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  const std::vector<std::pair<std::uint8_t, llmfw::v1::WsOpcode>> opcodes = {
+      {ws_opcode::kText, llmfw::v1::WS_OPCODE_TEXT},   {ws_opcode::kBinary, llmfw::v1::WS_OPCODE_BINARY},
+      {ws_opcode::kClose, llmfw::v1::WS_OPCODE_CLOSE}, {ws_opcode::kPing, llmfw::v1::WS_OPCODE_PING},
+      {ws_opcode::kPong, llmfw::v1::WS_OPCODE_PONG},
+  };
+  for (const auto& [opcode, expected] : opcodes) {
+    WsMessage m;
+    m.opcode = opcode;
+    const auto frame = buildWebSocketCapture({classifier, counters}, CaptureMode::kFull, sampleWebSocket(),
+                                             WsSender::kServer, 0, std::move(m), 0);
+    EXPECT_EQ(frame->capture().websocket().opcode(), expected) << int{opcode};
+  }
+}
+
+TEST(BuildWebSocketCapture, AnUnknownUpgradeUserAgentFallsBackToTheConnects) {
+  const ClientClassifier classifier = desktopClassifier();
+  ProxyCounters counters;
+  WebSocketConnection ws = sampleWebSocket();
+  ws.user_agent = "";
+  ws.connect_user_agent = "Mozilla/5.0 Electron/38";
+  const auto frame = buildWebSocketCapture({classifier, counters}, CaptureMode::kFull, ws, WsSender::kClient, 0,
+                                           sampleMessage(), 0);
+  EXPECT_EQ(frame->capture().client().path(), llmfw::v1::CLIENT_PATH_UI);
+  EXPECT_EQ(frame->capture().client().user_agent(), "Mozilla/5.0 Electron/38");
 }
 
 }  // namespace

@@ -15,6 +15,7 @@
 #include "llmfw/config.hpp"
 #include "llmfw/counters.hpp"
 #include "llmfw/http1_parser.hpp"
+#include "llmfw/websocket.hpp"
 
 namespace llmfw {
 
@@ -127,6 +128,30 @@ class ExchangeCaptureBuilder {
   std::string request_user_agent_;
   bool head_request_ = false;
 };
+
+/// What every message on one WebSocket connection shares, from its upgrade exchange.
+struct WebSocketConnection {
+  std::uint64_t connection_id = 0;
+  std::uint32_t exchange_index = 0;       ///< The upgrade exchange's index on the connection.
+  std::uint64_t upgrade_capture_id = 0;   ///< The upgrade exchange's capture_id.
+  std::string host;                       ///< The upgrade request's Host, or the CONNECT host.
+  std::string target;                     ///< The upgrade request's target.
+  std::string negotiated_extensions;      ///< Sec-WebSocket-Extensions from the 101 response.
+  std::string user_agent;                 ///< The upgrade request's User-Agent.
+  std::string connect_user_agent;
+};
+
+/// Builds a Capture{websocket} for one message. Takes the next capture id from
+/// ctx.counters. `from` is the side that sent it; `message_index` counts messages per
+/// direction from 0. `received_unix_us` (when the message's last byte was read) is
+/// timings.start_unix_us. The payload is kept as the decoder capped it, or omitted in
+/// metadata_only mode. The client is classified as for an HTTP exchange.
+[[nodiscard]] std::unique_ptr<llmfw::v1::Frame> buildWebSocketCapture(const CaptureBuildContext& ctx,
+                                                                      CaptureMode mode,
+                                                                      const WebSocketConnection& connection,
+                                                                      WsSender from, std::uint32_t message_index,
+                                                                      WsMessage message,
+                                                                      std::int64_t received_unix_us);
 
 /// A frame's size for the capture queue's byte budget: its serialized size.
 [[nodiscard]] std::size_t approximateFrameBytes(const llmfw::v1::Frame& frame);

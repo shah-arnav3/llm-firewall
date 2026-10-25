@@ -43,6 +43,18 @@ llmfw::v1::ExchangeOutcome toProto(ExchangeOutcomeTag outcome) {
   return llmfw::v1::EXCHANGE_OUTCOME_UNSPECIFIED;
 }
 
+llmfw::v1::WsOpcode wsOpcodeToProto(std::uint8_t opcode) {
+  switch (opcode) {
+    case ws_opcode::kText: return llmfw::v1::WS_OPCODE_TEXT;
+    case ws_opcode::kBinary: return llmfw::v1::WS_OPCODE_BINARY;
+    case ws_opcode::kClose: return llmfw::v1::WS_OPCODE_CLOSE;
+    case ws_opcode::kPing: return llmfw::v1::WS_OPCODE_PING;
+    case ws_opcode::kPong: return llmfw::v1::WS_OPCODE_PONG;
+    default: break;
+  }
+  return llmfw::v1::WS_OPCODE_UNSPECIFIED;
+}
+
 std::string lowerCase(std::string_view text) {
   std::string out(text);
   std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -140,6 +152,34 @@ std::unique_ptr<llmfw::v1::Frame> buildDecryptedCapture(const CaptureBuildContex
   summary.set_duration_us(nonNegativeMicros(connection.duration));
   summary.set_upstream_connect_us(nonNegativeMicros(connection.upstream_connect));
   summary.set_client_handshake_us(nonNegativeMicros(connection.client_handshake));
+  return frame;
+}
+
+std::unique_ptr<llmfw::v1::Frame> buildWebSocketCapture(const CaptureBuildContext& ctx, CaptureMode mode,
+                                                        const WebSocketConnection& connection, WsSender from,
+                                                        std::uint32_t message_index, WsMessage message,
+                                                        std::int64_t received_unix_us) {
+  auto frame = startCapture(ctx, connection.connection_id, connection.user_agent, connection.connect_user_agent,
+                            received_unix_us);
+  llmfw::v1::Capture& capture = *frame->mutable_capture();
+  capture.set_exchange_index(connection.exchange_index);
+  llmfw::v1::WebSocketMessage& ws = *capture.mutable_websocket();
+  ws.set_upgrade_capture_id(connection.upgrade_capture_id);
+  ws.set_host(connection.host);
+  ws.set_target(connection.target);
+  ws.set_negotiated_extensions(connection.negotiated_extensions);
+  ws.set_direction(from == WsSender::kClient ? llmfw::v1::DIRECTION_CLIENT_TO_SERVER
+                                             : llmfw::v1::DIRECTION_SERVER_TO_CLIENT);
+  ws.set_opcode(wsOpcodeToProto(message.opcode));
+  ws.set_message_index(message_index);
+  ws.set_total_bytes(message.total_bytes);
+  ws.set_compressed(message.compressed);
+  if (mode == CaptureMode::kMetadataOnly) {
+    ws.set_omitted(true);
+  } else {
+    ws.set_payload(std::string(message.payload.begin(), message.payload.end()));
+    ws.set_truncated(message.truncated);
+  }
   return frame;
 }
 

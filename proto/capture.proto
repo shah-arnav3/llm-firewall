@@ -51,7 +51,8 @@ message StreamHello {
 enum CaptureMode {
   CAPTURE_MODE_UNSPECIFIED = 0;
   CAPTURE_MODE_FULL = 1;           // Bodies included, subject to caps.
-  CAPTURE_MODE_METADATA_ONLY = 2;  // Body.data is always empty and Body.omitted = true.
+  // Body.data and WebSocketMessage.payload are always empty, and their omitted = true.
+  CAPTURE_MODE_METADATA_ONLY = 2;
 }
 
 // Which desktop traffic path produced the capture. The proxy assigns it from the
@@ -168,6 +169,7 @@ message WebSocketMessage {
   // compressed. The collector inflates it using a per-connection context.
   bool compressed = 10;
   string negotiated_extensions = 11;  // Sec-WebSocket-Extensions from the 101 response.
+  bool omitted = 12;                  // True in CAPTURE_MODE_METADATA_ONLY.
 }
 
 enum Direction {
