@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <future>
 #include <memory>
@@ -233,6 +234,11 @@ TEST(DecryptedRelay, RelaysBothWaysAndCapturesOnClose) {
   EXPECT_EQ(decrypted.client_handshake_us(), 700u);
   EXPECT_GT(decrypted.duration_us(), 0u);
   EXPECT_EQ(h.counters().connections_decrypted.load(), 1u);
+  // The relay deregisters only after pushing its capture, so give it a moment.
+  const auto deadline = Clock::now() + std::chrono::seconds(2);
+  while (h.tunnels().size() != 0 && Clock::now() < deadline) {
+    std::this_thread::sleep_for(milliseconds(5));
+  }
   EXPECT_EQ(h.tunnels().size(), 0u);
 }
 
@@ -393,6 +399,8 @@ TEST(DecryptedRelay, TheObserverHearsWhenTheOriginEnds) {
     origin.shutdown(ignored);
   });
   EXPECT_EQ(readExactly(client, 3), "bye");
+  // Close only once the origin's close_notify has been passed on, so the origin ends first.
+  EXPECT_EQ(readUntilEnd(client), asio::error::eof);
   boost::system::error_code ignored;
   client.shutdown(ignored);
   origin_close.join();
