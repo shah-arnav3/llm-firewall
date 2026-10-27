@@ -130,6 +130,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_counters.cpp
     tests/test_decrypted_relay.cpp
     tests/test_decrypt_path.cpp
+    tests/test_fs_util.cpp
     tests/test_host_scope.cpp
     tests/test_http1_exchange_tracker.cpp
     tests/test_http1_parser.cpp

@@ -20,4 +20,12 @@ void createPrivateDirectories(const std::filesystem::path& dir);
 /// @throws std::system_error on any failure; the temp file is removed.
 void writeFileAtomically(const std::filesystem::path& path, std::string_view contents, mode_t mode);
 
+/// Whether `dir` is a directory (not a symlink to one) owned by getuid() with mode
+/// exactly 0700. False if it does not exist or cannot be examined.
+[[nodiscard]] bool isPrivateDirectory(const std::filesystem::path& dir);
+
+/// Whether `path` is a Unix domain socket (not a symlink to one) owned by getuid().
+/// False if it does not exist or cannot be examined.
+[[nodiscard]] bool isOwnSocket(const std::filesystem::path& path);
+
 }  // namespace llmfw

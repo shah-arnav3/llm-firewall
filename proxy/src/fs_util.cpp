@@ -76,4 +76,15 @@ void writeFileAtomically(const std::filesystem::path& path, std::string_view con
   }
 }
 
+bool isPrivateDirectory(const std::filesystem::path& dir) {
+  struct stat st {};
+  return ::lstat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == ::getuid() &&
+         (st.st_mode & 07777) == kDirMode;
+}
+
+bool isOwnSocket(const std::filesystem::path& path) {
+  struct stat st {};
+  return ::lstat(path.c_str(), &st) == 0 && S_ISSOCK(st.st_mode) && st.st_uid == ::getuid();
+}
+
 }  // namespace llmfw
