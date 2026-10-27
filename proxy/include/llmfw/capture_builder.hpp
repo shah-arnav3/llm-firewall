@@ -112,7 +112,8 @@ class ExchangeCaptureBuilder {
   /// The request's User-Agent; empty before setRequestHead or if it sent none.
   [[nodiscard]] const std::string& requestUserAgent() const;
 
-  /// The finished frame. Takes the next capture id from ctx.counters.
+  /// The finished frame. Takes the next capture id from ctx.counters, and counts each
+  /// truncated body in request_bodies_truncated or response_bodies_truncated.
   [[nodiscard]] std::unique_ptr<llmfw::v1::Frame> finish(ExchangeOutcomeTag outcome);
 
  private:
@@ -144,8 +145,9 @@ struct WebSocketConnection {
 /// Builds a Capture{websocket} for one message. Takes the next capture id from
 /// ctx.counters. `from` is the side that sent it; `message_index` counts messages per
 /// direction from 0. `received_unix_us` (when the message's last byte was read) is
-/// timings.start_unix_us. The payload is kept as the decoder capped it, or omitted in
-/// metadata_only mode. The client is classified as for an HTTP exchange.
+/// timings.start_unix_us. The payload is kept as the decoder capped it (counting a
+/// truncated one in ctx.counters.ws_messages_truncated), or omitted in metadata_only
+/// mode. The client is classified as for an HTTP exchange.
 [[nodiscard]] std::unique_ptr<llmfw::v1::Frame> buildWebSocketCapture(const CaptureBuildContext& ctx,
                                                                       CaptureMode mode,
                                                                       const WebSocketConnection& connection,

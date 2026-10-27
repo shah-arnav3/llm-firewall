@@ -179,6 +179,9 @@ std::unique_ptr<llmfw::v1::Frame> buildWebSocketCapture(const CaptureBuildContex
   } else {
     ws.set_payload(std::string(message.payload.begin(), message.payload.end()));
     ws.set_truncated(message.truncated);
+    if (message.truncated) {
+      ctx.counters.ws_messages_truncated.fetch_add(1, std::memory_order_relaxed);
+    }
   }
   return frame;
 }
@@ -257,6 +260,12 @@ std::unique_ptr<llmfw::v1::Frame> ExchangeCaptureBuilder::finish(ExchangeOutcome
   capture.set_capture_id(ctx_.counters.nextCaptureId());
   capture.mutable_http()->set_outcome(toProto(outcome));
   setClient(ctx_, *capture.mutable_client(), request_user_agent_, connection_.connect_user_agent);
+  if (capture.http().request().body().truncated()) {
+    ctx_.counters.request_bodies_truncated.fetch_add(1, std::memory_order_relaxed);
+  }
+  if (capture.http().response().body().truncated()) {
+    ctx_.counters.response_bodies_truncated.fetch_add(1, std::memory_order_relaxed);
+  }
   return std::move(frame_);
 }
 

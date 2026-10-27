@@ -322,6 +322,28 @@ TEST(ExchangeCaptureBuilder, FullModeCapsBodies) {
   const llmfw::v1::Body& response = frame->capture().http().response().body();
   EXPECT_EQ(response.data(), "12345678");
   EXPECT_FALSE(response.truncated());
+  EXPECT_EQ(f.counters.request_bodies_truncated.load(), 1u);
+  EXPECT_EQ(f.counters.response_bodies_truncated.load(), 0u);
+}
+
+TEST(ExchangeCaptureBuilder, CountsATruncatedResponseBody) {
+  ExchangeFixture f;
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kFull);
+  b.setRequestHead(requestHead());
+  b.setResponseHead(responseHead(), f.t0);
+  b.appendResponseBody(bytesOf(std::string(f.cfg.response_body_cap_bytes + 1, 'r')));
+  (void)b.finish(ExchangeOutcomeTag::kComplete);
+  EXPECT_EQ(f.counters.request_bodies_truncated.load(), 0u);
+  EXPECT_EQ(f.counters.response_bodies_truncated.load(), 1u);
+}
+
+TEST(ExchangeCaptureBuilder, MetadataOnlyCountsNoTruncation) {
+  ExchangeFixture f;
+  ExchangeCaptureBuilder b = f.builder(CaptureMode::kMetadataOnly);
+  b.setRequestHead(requestHead());
+  b.appendRequestBody(bytesOf("abcdef"));
+  (void)b.finish(ExchangeOutcomeTag::kComplete);
+  EXPECT_EQ(f.counters.request_bodies_truncated.load(), 0u);
 }
 
 TEST(ExchangeCaptureBuilder, ClassifiesTheRequestUserAgent) {
@@ -445,6 +467,7 @@ TEST(BuildWebSocketCapture, CopiesTheMessageAndItsConnection) {
   EXPECT_TRUE(ws.truncated());
   EXPECT_TRUE(ws.compressed());
   EXPECT_FALSE(ws.omitted());
+  EXPECT_EQ(counters.ws_messages_truncated.load(), 1u);
 }
 
 TEST(BuildWebSocketCapture, MetadataOnlyOmitsThePayload) {
@@ -458,6 +481,7 @@ TEST(BuildWebSocketCapture, MetadataOnlyOmitsThePayload) {
   EXPECT_TRUE(ws.payload().empty());
   EXPECT_FALSE(ws.truncated());
   EXPECT_EQ(ws.total_bytes(), 5u);
+  EXPECT_EQ(counters.ws_messages_truncated.load(), 0u);
 }
 
 TEST(BuildWebSocketCapture, MapsEveryOpcode) {
