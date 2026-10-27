@@ -91,6 +91,8 @@ add_library(llmfw_core STATIC
 target_include_directories(llmfw_core
   PUBLIC  include
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen-pac)
+# The version the proxy reports to the collector in its hello frame.
+target_compile_definitions(llmfw_core PRIVATE LLMFW_VERSION="${PROJECT_VERSION}")
 target_link_libraries(llmfw_core
   PUBLIC  llmfw_flags llmfw_proto Boost::headers OpenSSL::SSL OpenSSL::Crypto
           "$<LINK_LIBRARY:FRAMEWORK,Security>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation>"

@@ -432,18 +432,22 @@ llm-firewall/
     tests/                  GoogleTest unit and integration tests
 ```
 
-The collector (Java 21), TLS decryption and the LaunchAgent templates are added to the
-repository when they are built.
+The collector (Java 21) and the LaunchAgent templates are added to the repository when
+they are built.
 
 ## Build and test
 
-The proxy in `proxy/` builds and runs in `metadata_only` mode: it logs metadata records
-and never records content. By default it blind-tunnels every CONNECT, with one record
+The proxy in `proxy/` builds and runs. In `metadata_only` mode (the default) it logs
+metadata records and never records content. By default it blind-tunnels every CONNECT, with one record
 per connection. With `proxy.decrypt: true` it decrypts the scoped hosts its leaf
 certificate covers and relays them byte for byte, and it also parses the HTTP/1.1
 inside: each request and its response get an `"http"` record with the method, the
 path without its query string, the status, timings and body sizes. After a WebSocket
 upgrade, each message gets a `"websocket"` record with its direction, opcode and size.
+With `proxy.mode: full` it keeps bodies (up to the `capture` caps) and sends every
+record to the collector's private socket in `ipc.socket_dir` instead of the log. The
+collector is not built yet, so for now those records are dropped and counted
+(`captures_dropped_ipc_unavailable`).
 `llmfw-setup profile` writes the configuration profile that points Claude at it, and
 `llmfw-setup certs` creates the certificates that decryption will use, and
 `llmfw-setup trust` trusts the CA in the login Keychain. Installing (LaunchAgents) and

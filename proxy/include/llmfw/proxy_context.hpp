@@ -79,7 +79,7 @@ enum ExitCode : int {
   kExitOk = 0,
   kExitUnexpected = 1,  ///< An unexpected exception.
   kExitConfig = 2,      ///< Bad command line or configuration.
-  kExitSink = 3,        ///< The metadata log cannot be opened.
+  kExitSink = 3,        ///< The metadata log cannot be opened (metadata_only mode).
   kExitBind = 4,        ///< The listen address cannot be bound.
   kExitCerts = 5,       ///< proxy.decrypt is on and the certificates are missing or invalid.
 };
@@ -87,19 +87,21 @@ enum ExitCode : int {
 /// Owns the io_context and its threads, every shared object, the drain thread and its sink.
 ///
 /// run():
-///   - Rejects proxy.mode "full" (kExitConfig): body capture is not implemented.
 ///   - With proxy.decrypt on: loads the leaf certificate (kExitCerts if it is missing or
 ///     invalid; a warning if it expires within 30 days) and the upstream trust verifier
 ///     (kExitConfig), before anything else starts.
-///   - Startup: instance id -> metadata log (kExitSink on failure) -> shared objects ->
-///     drain -> with proxy.decrypt, the client TLS breaker, terminator and upstream
+///   - Startup: instance id -> the sink: in metadata_only mode the metadata log
+///     (kExitSink on failure), in full mode a UnixSocketWriter to the collector, which
+///     connects now if it can and keeps retrying if not -> shared objects -> drain ->
+///     with proxy.decrypt, the client TLS breaker, terminator and upstream
 ///     connector -> listener (kExitBind on failure) -> render the PAC for the bound port ->
 ///     listen.io_threads I/O threads.
 ///   - Shutdown, on SIGINT, SIGTERM or requestStop(): stop accepting -> close every open
 ///     tunnel (each is still captured) -> once they have finished, or after 2 s, stop
-///     the I/O threads -> drain the queue to the log for up to 2 s -> log a counter
+///     the I/O threads -> drain the queue to the sink for up to 2 s -> log a counter
 ///     summary -> return kExitOk (kExitUnexpected if an I/O thread threw).
-/// If the proxy is not running, Claude's PAC falls back to DIRECT, so only logging is lost.
+/// If the proxy is not running, Claude's PAC falls back to DIRECT, so only logging is
+/// lost; if the collector is not running, captures are dropped and counted.
 class ProxyApp {
  public:
   explicit ProxyApp(ProxyConfig config);

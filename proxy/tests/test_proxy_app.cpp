@@ -6,6 +6,12 @@
 #include <thread>
 #include <vector>
 
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <google/protobuf/io/zero_copy_stream_impl.h>
+#include <google/protobuf/util/delimited_message_util.h>
 #include <google/protobuf/util/json_util.h>
 
 #include "llmfw/proxy_context.hpp"
@@ -175,11 +181,97 @@ TEST(ProxyApp, ReturnsSinkErrorWhenLogCannotBeOpened) {
   EXPECT_EQ(app.run(), kExitSink);
 }
 
-TEST(ProxyApp, RejectsFullMode) {
+/// A listening collector socket in a private directory under /tmp (short enough for sun_path).
+class CollectorSocket {
+ public:
+  CollectorSocket() {
+    std::string tmpl = "/tmp/llmfw-col-XXXXXX";
+    dir_ = ::mkdtemp(tmpl.data());
+    listener_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    (dir_ / "c.sock").string().copy(addr.sun_path, sizeof(addr.sun_path) - 1);
+    EXPECT_EQ(::bind(listener_, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)), 0);
+    EXPECT_EQ(::listen(listener_, 4), 0);
+  }
+  ~CollectorSocket() {
+    ::close(listener_);
+    fs::remove_all(dir_);
+  }
+  CollectorSocket(const CollectorSocket&) = delete;
+  CollectorSocket& operator=(const CollectorSocket&) = delete;
+
+  void pointAt(ProxyConfig& cfg) const {
+    cfg.mode = CaptureMode::kFull;
+    cfg.ipc.socket_dir = dir_;
+    cfg.ipc.socket_name = "c.sock";
+  }
+
+  /// Accepts the proxy's connection and reads frames until it closes.
+  std::vector<llmfw::v1::Frame> readAll() {
+    std::vector<llmfw::v1::Frame> frames;
+    const int conn = ::accept(listener_, nullptr, nullptr);
+    EXPECT_GE(conn, 0);
+    timeval timeout{.tv_sec = 2, .tv_usec = 0};
+    ::setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    {
+      google::protobuf::io::FileInputStream input(conn);
+      llmfw::v1::Frame frame;
+      while (google::protobuf::util::ParseDelimitedFromZeroCopyStream(&frame, &input, nullptr)) {
+        frames.push_back(frame);
+      }
+    }
+    ::close(conn);
+    return frames;
+  }
+
+ private:
+  fs::path dir_;
+  int listener_ = -1;
+};
+
+TEST(ProxyApp, FullModeSendsCapturesToTheCollector) {
   const TempDir tmp;
-  ProxyConfig cfg = appConfig(tmp.path() / "metadata.jsonl", test::closedPort());
+  const fs::path log = tmp.path() / "metadata.jsonl";
+  const std::uint16_t port = test::closedPort();
+  CollectorSocket collector;
+  ProxyConfig cfg = appConfig(log, port);
+  collector.pointAt(cfg);
+  RunningApp running(std::move(cfg));
+  Upstream upstream(echo);
+
+  asio::io_context io;
+  tcp::socket client(io);
+  ASSERT_TRUE(connectWhenReady(client, port));
+  asio::write(client, asio::buffer("CONNECT 127.0.0.1:" + std::to_string(upstream.port()) + " HTTP/1.1\r\n\r\n"));
+  EXPECT_EQ(readExactly(client, kEstablished.size()), kEstablished);
+  asio::write(client, asio::buffer(std::string("hi")));
+  EXPECT_EQ(readExactly(client, 2), "hi");
+  EXPECT_EQ(running.stopAndWait(), kExitOk);
+
+  const std::vector<llmfw::v1::Frame> frames = collector.readAll();
+  ASSERT_GE(frames.size(), 3u);
+  EXPECT_TRUE(frames[0].has_hello());
+  EXPECT_FALSE(frames[0].hello().proxy_version().empty());
+  EXPECT_TRUE(frames[1].has_stats());
+  const llmfw::v1::Frame& capture = frames.back();
+  ASSERT_TRUE(capture.has_capture());
+  EXPECT_EQ(capture.capture().tunnel().bytes_client_to_server(), 2u);
+  EXPECT_FALSE(fs::exists(log)) << "full mode writes no metadata log";
+}
+
+TEST(ProxyApp, FullModeRunsWithoutACollector) {
+  const TempDir tmp;
+  const std::uint16_t port = test::closedPort();
+  ProxyConfig cfg = appConfig(tmp.path() / "metadata.jsonl", port);
   cfg.mode = CaptureMode::kFull;
-  EXPECT_EQ(ProxyApp(std::move(cfg)).run(), kExitConfig);
+  cfg.ipc.socket_dir = tmp.path() / "missing";
+  RunningApp running(std::move(cfg));
+  asio::io_context io;
+  tcp::socket client(io);
+  EXPECT_TRUE(connectWhenReady(client, port)) << "the proxy serves even with captures going nowhere";
+  client.close();
+  EXPECT_EQ(running.stopAndWait(), kExitOk);
 }
 
 /// Writes a CA-issued leaf into a fresh private directory under `tmp` and points cfg.certs at it.

@@ -1,6 +1,7 @@
 #include "llmfw/proxy_context.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <optional>
 #include <thread>
@@ -24,6 +25,7 @@
 #include "llmfw/tls_client.hpp"
 #include "llmfw/tls_server.hpp"
 #include "llmfw/trust_verifier.hpp"
+#include "llmfw/unix_socket_writer.hpp"
 
 namespace llmfw {
 
@@ -156,11 +158,6 @@ void ProxyApp::requestStop() {
 }
 
 int ProxyApp::run() {
-  if (config_.mode != CaptureMode::kMetadataOnly) {
-    logError("proxy.mode: \"full\" is not implemented yet; use \"metadata_only\"");
-    return kExitConfig;
-  }
-
   std::optional<LeafCertStore> certs;
   std::shared_ptr<const UpstreamTrustVerifier> verifier;
   if (config_.decrypt) {
@@ -180,15 +177,26 @@ int ProxyApp::run() {
   }
 
   const std::string instance_id = randomUuid();  // Tells proxy starts apart in the logs.
-  std::unique_ptr<MetadataLogger> sink;
-  try {
-    sink = std::make_unique<MetadataLogger>(config_.metadata_log, instance_id);
-  } catch (const std::system_error& e) {
-    logError(std::string("cannot open the metadata log: ") + e.what());
-    return kExitSink;
-  }
-
+  const bool full = config_.mode == CaptureMode::kFull;
   ProxyCounters counters;
+  std::unique_ptr<FrameSink> sink;
+  if (full) {
+    const auto started_unix_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::system_clock::now().time_since_epoch())
+                                     .count();
+    sink = std::make_unique<UnixSocketWriter>(config_.ipc, instance_id, LLMFW_VERSION, started_unix_ms, counters);
+  } else {
+    try {
+      sink = std::make_unique<MetadataLogger>(config_.metadata_log, instance_id);
+    } catch (const std::system_error& e) {
+      logError(std::string("cannot open the metadata log: ") + e.what());
+      return kExitSink;
+    }
+  }
+  // The drain's first tick comes a second after it starts; connect before that, so
+  // the first captures are not dropped.
+  sink->tick(std::chrono::steady_clock::now());
+
   CaptureQueue queue(config_.capture.queue_max_items, config_.capture.queue_max_bytes, counters);
   const ClientClassifier classifier(config_.clients);
   const CaptureBuildContext build{classifier, counters};
@@ -240,7 +248,8 @@ int ProxyApp::run() {
   listener->start();
   logInfo("llmfw-proxy listening on " + config_.listen.address + ":" +
           std::to_string(listener->localEndpoint().port()) + " instance=" + instance_id +
-          " mode=metadata_only decrypt=" + (certs ? "on" : "off") + " log=" + config_.metadata_log.path.string());
+          (full ? " mode=full" : " mode=metadata_only") + " decrypt=" + (certs ? "on" : "off") +
+          (full ? " socket=" + config_.ipc.socketPath().string() : " log=" + config_.metadata_log.path.string()));
 
   {
     const std::lock_guard lock(mu_);

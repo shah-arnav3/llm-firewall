@@ -24,6 +24,7 @@ proxy:
   idle_timeout_ms: 300000        # SSE replies can be quiet for long stretches.
   # "metadata_only" = phase 0: no bodies are captured, and records go to metadata_log.
   # "full"          = phase 1: bodies are captured (capped) and sent to the collector socket.
+  #                   While the collector is not running, every capture is dropped and counted.
   mode: metadata_only
   # Decrypt scoped hosts (scope.decrypt_hosts) with the leaf certificate in certs.dir.
   # Leave this false until `llmfw-setup certs` has run AND the CA is trusted: a client
