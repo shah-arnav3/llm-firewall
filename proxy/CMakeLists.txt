@@ -85,6 +85,7 @@ add_library(llmfw_core STATIC
   src/tls_client.cpp
   src/tls_server.cpp
   src/trust_verifier.cpp
+  src/unix_socket_writer.cpp
   src/websocket.cpp
   src/websocket_tracker.cpp)
 target_include_directories(llmfw_core
@@ -149,6 +150,7 @@ if (LLMFW_BUILD_TESTS)
     tests/test_tls_server.cpp
     tests/test_trust_verifier.cpp
     tests/test_tunnel_registry.cpp
+    tests/test_unix_socket_writer.cpp
     tests/test_websocket_frame.cpp
     tests/test_websocket_tracker.cpp)
   target_link_libraries(llmfw-tests PRIVATE llmfw_setup_core GTest::gtest_main)
