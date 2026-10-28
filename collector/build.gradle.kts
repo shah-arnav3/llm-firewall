@@ -22,6 +22,8 @@ val protobufVersion = "4.36.2"
 dependencies {
     // Wire contract, generated from ../proto/capture.proto. Plain protobuf, no gRPC.
     implementation("com.google.protobuf:protobuf-java:$protobufVersion")
+    // JSON bodies, read into trees with stream limits.
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.3")
     // llm-firewall.yaml, read with SafeConstructor only.
     implementation("org.yaml:snakeyaml:2.7")
     // Content-Encoding: br. Google's pure-Java decoder, so hostile input never reaches native code.
