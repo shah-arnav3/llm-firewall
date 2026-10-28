@@ -3,6 +3,7 @@
 
 plugins {
     java
+    application
     id("com.google.protobuf") version "0.10.0"
 }
 
@@ -41,6 +42,11 @@ protobuf {
     protoc {
         artifact = "com.google.protobuf:protoc:$protobufVersion"
     }
+}
+
+application {
+    mainClass.set("dev.llmfirewall.collector.CollectorMain")
+    applicationName = "llmfw-collector"
 }
 
 tasks.withType<JavaCompile>().configureEach {

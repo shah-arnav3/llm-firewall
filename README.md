@@ -485,12 +485,25 @@ ctest --test-dir proxy/build-asan --output-on-failure
 
 ### The collector
 
-The collector so far only decodes the proxy's frames. It needs JDK 21 (for example
-`brew install openjdk@21`); the Gradle wrapper downloads Gradle 9.0.0 on first use.
+So far the collector receives the proxy's records on its socket and counts them: by
+kind, capture-id gaps, and the proxy's own drop and error counters. It logs a summary
+to stderr every minute and when it stops. It does not parse or store anything yet. It
+needs JDK 21 (for example `brew install openjdk@21`); the Gradle wrapper downloads
+Gradle 9.0.0 on first use.
 
 ```sh
-cd collector && ./gradlew test
+cd collector
+./gradlew test
+./gradlew installDist
+build/install/llmfw-collector/bin/llmfw-collector --config ../config/llm-firewall.yaml
 ```
+
+It creates `ipc.socket_dir` (mode 0700) and listens on `ipc.socket_name` there. Run the
+proxy with `proxy.mode: full` and the same config, and the collector logs `proxy <id>
+connected`. Stop it with Ctrl-C or SIGTERM: its last line is the summary, for example
+`captures received: decrypted=2 http=2 tunnel=1; coverage since last summary:
+CAPTURES_RECEIVED+5`. Exit codes: 2 for a bad command line or config, 3 if the socket
+cannot be set up.
 
 ### Running the proxy
 
