@@ -21,6 +21,8 @@ val protobufVersion = "4.36.2"
 dependencies {
     // Wire contract, generated from ../proto/capture.proto. Plain protobuf, no gRPC.
     implementation("com.google.protobuf:protobuf-java:$protobufVersion")
+    // llm-firewall.yaml, read with SafeConstructor only.
+    implementation("org.yaml:snakeyaml:2.7")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
