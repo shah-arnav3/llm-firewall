@@ -10,19 +10,22 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.zip.GZIPInputStream;
+import org.brotli.dec.BrotliInputStream;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
 
 /**
  * Undoes Content-Encoding: the proxy captures bodies still encoded. Supported codings
- * are identity, gzip (and x-gzip) and deflate, either zlib-wrapped as the RFC says or
- * raw as some servers send it. Stacked codings ({@code gzip, deflate}) are undone in
+ * are identity, gzip (and x-gzip), deflate (zlib-wrapped as the RFC says, or raw as
+ * some servers send it) and br. Stacked codings ({@code gzip, deflate}) are undone in
  * reverse header order. Coding names ignore case.
  *
  * <p>Each decoding step stops at {@code maxDecodedBytes}, so a decompression bomb cannot
  * exhaust memory; the prefix is returned with {@code truncated} set. A stream that ends
  * early, as a capped capture usually does, gives what was decoded with {@code incomplete}
- * set.
+ * set. The br decoder cannot tell a stream that ends early from a corrupt one, so a
+ * truncated br body fails with {@code decode:corrupt}; the capture's own truncated flag
+ * tells the two apart.
  */
 public final class ContentDecoder {
 
@@ -81,6 +84,7 @@ public final class ContentDecoder {
         try (InputStream decoded = switch (coding) {
                 case "gzip", "x-gzip" -> new GZIPInputStream(in);
                 case "deflate" -> new InflaterInputStream(in, inflater);
+                case "br" -> new BrotliInputStream(in);
                 default -> throw new ParseException("decode:unsupported");
             }) {
             return readCapped(decoded);

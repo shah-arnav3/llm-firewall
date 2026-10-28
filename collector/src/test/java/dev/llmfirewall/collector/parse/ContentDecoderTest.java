@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 import java.util.zip.GZIPOutputStream;
@@ -55,6 +56,42 @@ class ContentDecoderTest {
         assertArrayEquals(TEXT, decoder.decode(gzip(TEXT), "X-GZIP").data());
         assertArrayEquals(TEXT, decoder.decode(deflate(TEXT, false), "deflate").data(), "zlib-wrapped");
         assertArrayEquals(TEXT, decoder.decode(deflate(TEXT, true), "deflate").data(), "raw");
+    }
+
+    /** The 3000-event SSE stream that src/test/resources/.../sse.br holds, brotli-compressed with the brotli CLI. */
+    private static byte[] sse() {
+        final StringBuilder out = new StringBuilder();
+        for (int i = 0; i < 3000; i++) {
+            out.append("data: {\"n\":").append(i).append("}\n\n");
+        }
+        return out.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static byte[] sseBrotli() throws IOException {
+        try (var in = ContentDecoderTest.class.getResourceAsStream("sse.br")) {
+            return in.readAllBytes();
+        }
+    }
+
+    @Test
+    void decodesBrotli() throws Exception {
+        final ContentDecoder.Decoded d = decoder.decode(sseBrotli(), "br");
+        assertArrayEquals(sse(), d.data());
+        assertFalse(d.truncated() || d.incomplete());
+    }
+
+    @Test
+    void capsABrotliBomb() throws Exception {
+        final byte[] tenMiBOfZeros = Base64.getDecoder().decode("n///n/gnAOKxQCD3/hM=");
+        final ContentDecoder.Decoded d = new ContentDecoder(1000).decode(tenMiBOfZeros, "br");
+        assertEquals(1000, d.data().length);
+        assertTrue(d.truncated());
+    }
+
+    @Test
+    void aTruncatedBrotliBodyIsReportedAsCorrupt() throws Exception {
+        final byte[] half = Arrays.copyOf(sseBrotli(), sseBrotli().length / 2);
+        assertEquals("decode:corrupt", assertThrows(ParseException.class, () -> decoder.decode(half, "br")).code());
     }
 
     @Test
@@ -111,7 +148,7 @@ class ContentDecoderTest {
 
     @Test
     void rejectsUnknownEncoding() {
-        for (String header : new String[] {"br", "zstd", "compress", "gzip, rot13"}) {
+        for (String header : new String[] {"zstd", "compress", "gzip, rot13"}) {
             assertEquals("decode:unsupported", assertThrows(ParseException.class, () -> decoder.decode(TEXT, header)).code(),
                          header);
         }

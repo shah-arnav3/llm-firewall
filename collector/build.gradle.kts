@@ -24,6 +24,8 @@ dependencies {
     implementation("com.google.protobuf:protobuf-java:$protobufVersion")
     // llm-firewall.yaml, read with SafeConstructor only.
     implementation("org.yaml:snakeyaml:2.7")
+    // Content-Encoding: br. Google's pure-Java decoder, so hostile input never reaches native code.
+    implementation("org.brotli:dec:0.1.2")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
