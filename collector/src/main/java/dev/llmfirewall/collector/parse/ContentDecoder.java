@@ -3,6 +3,7 @@ package dev.llmfirewall.collector.parse;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -10,6 +11,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.zip.GZIPInputStream;
+import com.github.luben.zstd.ZstdIOException;
+import com.github.luben.zstd.ZstdInputStreamNoFinalizer;
 import org.brotli.dec.BrotliInputStream;
 import java.util.zip.Inflater;
 import java.util.zip.InflaterInputStream;
@@ -17,7 +20,7 @@ import java.util.zip.InflaterInputStream;
 /**
  * Undoes Content-Encoding: the proxy captures bodies still encoded. Supported codings
  * are identity, gzip (and x-gzip), deflate (zlib-wrapped as the RFC says, or raw as
- * some servers send it) and br. Stacked codings ({@code gzip, deflate}) are undone in
+ * some servers send it), br and zstd. Stacked codings ({@code gzip, deflate}) are undone in
  * reverse header order. Coding names ignore case.
  *
  * <p>Each decoding step stops at {@code maxDecodedBytes}, so a decompression bomb cannot
@@ -85,6 +88,7 @@ public final class ContentDecoder {
                 case "gzip", "x-gzip" -> new GZIPInputStream(in);
                 case "deflate" -> new InflaterInputStream(in, inflater);
                 case "br" -> new BrotliInputStream(in);
+                case "zstd" -> new TruncationAsEof(new ZstdInputStreamNoFinalizer(in));
                 default -> throw new ParseException("decode:unsupported");
             }) {
             return readCapped(decoded);
@@ -95,6 +99,25 @@ public final class ContentDecoder {
         } finally {
             if (inflater != null) {
                 inflater.end();
+            }
+        }
+    }
+
+    /** Reports zstd-jni's "Truncated source", input that ends mid-frame, as the EOFException the other codings throw. */
+    private static final class TruncationAsEof extends FilterInputStream {
+        TruncationAsEof(InputStream in) {
+            super(in);
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            try {
+                return super.read(b, off, len);
+            } catch (ZstdIOException e) {
+                if ("Truncated source".equals(e.getMessage())) {
+                    throw new EOFException(e.getMessage());
+                }
+                throw e;
             }
         }
     }

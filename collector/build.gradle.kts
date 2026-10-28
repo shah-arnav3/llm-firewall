@@ -26,6 +26,8 @@ dependencies {
     implementation("org.yaml:snakeyaml:2.7")
     // Content-Encoding: br. Google's pure-Java decoder, so hostile input never reaches native code.
     implementation("org.brotli:dec:0.1.2")
+    // Content-Encoding: zstd. The reference C decoder (continuously fuzzed by OSS-Fuzz) over JNI.
+    implementation("com.github.luben:zstd-jni:1.5.7-23")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")

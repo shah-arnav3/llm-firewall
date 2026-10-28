@@ -58,7 +58,7 @@ class ContentDecoderTest {
         assertArrayEquals(TEXT, decoder.decode(deflate(TEXT, true), "deflate").data(), "raw");
     }
 
-    /** The 3000-event SSE stream that src/test/resources/.../sse.br holds, brotli-compressed with the brotli CLI. */
+    /** The 3000-event SSE stream that sse.br and sse.zst in src/test/resources hold, made with the brotli and zstd CLIs. */
     private static byte[] sse() {
         final StringBuilder out = new StringBuilder();
         for (int i = 0; i < 3000; i++) {
@@ -92,6 +92,40 @@ class ContentDecoderTest {
     void aTruncatedBrotliBodyIsReportedAsCorrupt() throws Exception {
         final byte[] half = Arrays.copyOf(sseBrotli(), sseBrotli().length / 2);
         assertEquals("decode:corrupt", assertThrows(ParseException.class, () -> decoder.decode(half, "br")).code());
+    }
+
+    private static byte[] resource(String name) throws IOException {
+        try (var in = ContentDecoderTest.class.getResourceAsStream(name)) {
+            return in.readAllBytes();
+        }
+    }
+
+    @Test
+    void decodesZstd() throws Exception {
+        final ContentDecoder.Decoded d = decoder.decode(resource("sse.zst"), "zstd");
+        assertArrayEquals(sse(), d.data());
+        assertFalse(d.truncated() || d.incomplete());
+    }
+
+    @Test
+    void capsAZstdBomb() throws Exception {
+        final ContentDecoder.Decoded d = new ContentDecoder(1000).decode(resource("zeros.zst"), "zstd");
+        assertEquals(1000, d.data().length);
+        assertTrue(d.truncated());
+    }
+
+    @Test
+    void aTruncatedZstdBodyIsIncomplete() throws Exception {
+        final byte[] encoded = resource("sse.zst");
+        final ContentDecoder.Decoded d = decoder.decode(Arrays.copyOf(encoded, encoded.length / 2), "zstd");
+        assertTrue(d.incomplete());
+        assertArrayEquals(Arrays.copyOf(sse(), d.data().length), d.data(), "a true prefix");
+    }
+
+    @Test
+    void rejectsCorruptZstd() {
+        assertEquals("decode:corrupt", assertThrows(ParseException.class,
+            () -> decoder.decode("not zstd at all".getBytes(StandardCharsets.UTF_8), "zstd")).code());
     }
 
     @Test
@@ -148,7 +182,7 @@ class ContentDecoderTest {
 
     @Test
     void rejectsUnknownEncoding() {
-        for (String header : new String[] {"zstd", "compress", "gzip, rot13"}) {
+        for (String header : new String[] {"compress", "gzip, rot13"}) {
             assertEquals("decode:unsupported", assertThrows(ParseException.class, () -> decoder.decode(TEXT, header)).code(),
                          header);
         }
