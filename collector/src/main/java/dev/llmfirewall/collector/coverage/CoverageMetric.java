@@ -5,6 +5,22 @@ package dev.llmfirewall.collector.coverage;
  * make gaps in what was logged visible.
  */
 public enum CoverageMetric {
+    // From the proxy's ProxyStats, as deltas [proxy_instance_id]
+    PROXY_CAPTURES_DROPPED_QUEUE_FULL,
+    PROXY_CAPTURES_DROPPED_IPC_UNAVAILABLE,
+    PROXY_REQUEST_BODIES_TRUNCATED,
+    PROXY_RESPONSE_BODIES_TRUNCATED,
+    PROXY_WS_MESSAGES_TRUNCATED,
+    PROXY_TUNNELS_UNSCOPED,
+    PROXY_TUNNELS_SCOPED_NO_CERT,
+    PROXY_TUNNELS_UPSTREAM_VERIFY_FAILED,
+    PROXY_TUNNELS_CLIENT_TLS_BREAKER,
+    PROXY_CLIENT_TLS_HANDSHAKE_FAILURES,
+    PROXY_HTTP_PARSE_ERRORS,
+    PROXY_WS_DECODE_ERRORS,
+    PROXY_NON_CONNECT_REJECTED,
+
+    // Observed by the collector
     /** Captures missing from the stream, by capture_id [proxy_instance_id]. Independent of the proxy's own counters. */
     CAPTURE_ID_GAP,
     /** Captures received from the proxy. */
