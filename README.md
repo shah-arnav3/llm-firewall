@@ -430,10 +430,13 @@ llm-firewall/
     cmake/                  pac_template.hpp.in (embeds config/claude.pac)
     include/llmfw/, src/    implementation
     tests/                  GoogleTest unit and integration tests
+  collector/                Java 21 / Gradle: the collector (receives captures from the proxy)
+    build.gradle.kts, gradlew
+    src/main/java/, src/test/java/
 ```
 
-The collector (Java 21) and the LaunchAgent templates are added to the repository when
-they are built.
+The rest of the collector (parsing, detection, storage) and the LaunchAgent templates
+are added to the repository as they are built.
 
 ## Build and test
 
@@ -478,6 +481,15 @@ With AddressSanitizer and UndefinedBehaviorSanitizer:
 cmake -S proxy -B proxy/build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLLMFW_SANITIZE=ON -DCMAKE_PREFIX_PATH="$(brew --prefix)"
 cmake --build proxy/build-asan
 ctest --test-dir proxy/build-asan --output-on-failure
+```
+
+### The collector
+
+The collector so far only decodes the proxy's frames. It needs JDK 21 (for example
+`brew install openjdk@21`); the Gradle wrapper downloads Gradle 9.0.0 on first use.
+
+```sh
+cd collector && ./gradlew test
 ```
 
 ### Running the proxy

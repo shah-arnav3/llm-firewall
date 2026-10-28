@@ -23,7 +23,7 @@ collector/.gradle/
 .gradle/
 *.class
 *.jar
-!gradle/wrapper/gradle-wrapper.jar
+!collector/gradle/wrapper/gradle-wrapper.jar
 out/
 .idea/
 *.iml
