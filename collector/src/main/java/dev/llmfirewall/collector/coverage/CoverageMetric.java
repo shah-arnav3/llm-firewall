@@ -29,4 +29,8 @@ public enum CoverageMetric {
     IPC_PROTOCOL_ERRORS,
     /** Connections refused because the peer is another user. */
     IPC_PEER_REJECTED,
+    /** Bodies that could not be decoded or parsed [failure code]. */
+    PARSE_FAILURE,
+    /** Bodies of a media type that is not parsed [media type]. */
+    BODY_SKIPPED,
 }
