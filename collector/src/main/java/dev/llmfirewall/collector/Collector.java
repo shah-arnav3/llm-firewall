@@ -6,7 +6,14 @@ import dev.llmfirewall.collector.coverage.CoverageCounters;
 import dev.llmfirewall.collector.coverage.ProxyStatsRecorder;
 import dev.llmfirewall.collector.ingest.CaptureReceiver;
 import dev.llmfirewall.collector.ingest.FrameDecoder;
+import dev.llmfirewall.collector.parse.ContentDecoder;
+import dev.llmfirewall.collector.parse.JsonBodyParser;
+import dev.llmfirewall.collector.parse.ParserRegistry;
+import dev.llmfirewall.collector.parse.SseStreamParser;
 import dev.llmfirewall.proto.v1.Capture;
+import dev.llmfirewall.proto.v1.Header;
+import dev.llmfirewall.proto.v1.HttpRequest;
+import dev.llmfirewall.proto.v1.HttpResponse;
 import dev.llmfirewall.proto.v1.ProxyStats;
 import java.io.IOException;
 import java.time.Clock;
@@ -21,19 +28,26 @@ import java.util.stream.Collectors;
 
 /**
  * The running collector, as far as it is built: it receives the proxy's frames, counts
- * captures by kind, records coverage (capture-id gaps and the proxy's own stats), and
- * logs both every {@code summaryInterval} and at close. Log lines hold counts, metric
- * names and proxy instance ids only, never capture content.
+ * captures by kind, parses each HTTP request and response body (which counts parse
+ * failures and skipped media types), records coverage (capture-id gaps and the proxy's
+ * own stats), and logs both every {@code summaryInterval} and at close. Parsed bodies
+ * are dropped once counted. Log lines hold counts, metric names, media types, failure
+ * codes and proxy instance ids only, never capture content.
  */
 public final class Collector implements AutoCloseable {
 
     /** Distinct dimensions kept per coverage metric between summaries. */
     static final int MAX_DIMENSIONS_PER_METRIC = 1000;
+    // Fixed until the collector section of the config is loaded: the example config's values.
+    static final int MAX_DECODED_BODY_BYTES = 64 << 20;
+    static final int JSON_MAX_NESTING_DEPTH = 200;
+    static final int JSON_MAX_STRING_LENGTH = 32 << 20;
 
     private static final System.Logger LOG = System.getLogger(Collector.class.getName());
 
     private final CoverageCounters coverage;
     private final CaptureReceiver receiver;
+    private final ParserRegistry parsers;
     private final Duration summaryInterval;
     private final Map<Capture.PayloadCase, Long> captures = new EnumMap<>(Capture.PayloadCase.class);
     private ScheduledExecutorService scheduler;
@@ -42,12 +56,16 @@ public final class Collector implements AutoCloseable {
         this.coverage = new CoverageCounters(MAX_DIMENSIONS_PER_METRIC, clock);
         this.summaryInterval = summaryInterval;
         final ProxyStatsRecorder stats = new ProxyStatsRecorder(coverage);
+        this.parsers = new ParserRegistry(new ContentDecoder(MAX_DECODED_BODY_BYTES),
+                                          new JsonBodyParser(JSON_MAX_NESTING_DEPTH, JSON_MAX_STRING_LENGTH),
+                                          new SseStreamParser(), coverage);
         this.receiver = new CaptureReceiver(config.ipc().socketDir(), config.ipc().socketName(),
                                             new FrameDecoder(config.ipc().maxFrameBytes()),
                                             new CaptureGapTracker(coverage), coverage, new CaptureReceiver.Sink() {
                                                 @Override
                                                 public void capture(Capture capture) {
                                                     countCapture(capture);
+                                                    parseBodies(capture);
                                                 }
 
                                                 @Override
@@ -93,6 +111,28 @@ public final class Collector implements AutoCloseable {
         }
         receiver.close();
         logSummary();
+    }
+
+    private void parseBodies(Capture capture) {
+        if (!capture.hasHttp()) {
+            return;
+        }
+        final HttpRequest request = capture.getHttp().getRequest();
+        final HttpResponse response = capture.getHttp().getResponse();
+        parsers.parseBody(request.getBody(), header(request.getHeadersList(), "content-type"),
+                          header(request.getHeadersList(), "content-encoding"), "req");
+        parsers.parseBody(response.getBody(), header(response.getHeadersList(), "content-type"),
+                          header(response.getHeadersList(), "content-encoding"), "resp");
+    }
+
+    /** The first value of a header, matched ignoring case; null if absent or redacted. */
+    private static String header(List<Header> headers, String name) {
+        for (Header h : headers) {
+            if (h.getName().equalsIgnoreCase(name) && !h.getRedacted()) {
+                return h.getValue();
+            }
+        }
+        return null;
     }
 
     private synchronized void countCapture(Capture capture) {

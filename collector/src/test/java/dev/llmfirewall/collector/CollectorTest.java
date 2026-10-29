@@ -6,7 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.llmfirewall.collector.config.CollectorConfig;
 import dev.llmfirewall.collector.coverage.CoverageCounters.Delta;
 import dev.llmfirewall.collector.coverage.CoverageMetric;
+import com.google.protobuf.ByteString;
+import dev.llmfirewall.proto.v1.Body;
 import dev.llmfirewall.proto.v1.Capture;
+import dev.llmfirewall.proto.v1.Header;
+import dev.llmfirewall.proto.v1.HttpRequest;
+import dev.llmfirewall.proto.v1.HttpResponse;
 import dev.llmfirewall.proto.v1.Frame;
 import dev.llmfirewall.proto.v1.HttpExchange;
 import dev.llmfirewall.proto.v1.ProxyStats;
@@ -71,7 +76,13 @@ class CollectorTest {
                 send(proxy,
                      Frame.newBuilder().setHello(StreamHello.newBuilder().setProtocolVersion(1).setProxyInstanceId("p")).build(),
                      Frame.newBuilder().setStats(ProxyStats.newBuilder().setProxyInstanceId("p").setCapturesDroppedQueueFull(2)).build(),
-                     capture(1, Capture.newBuilder().setHttp(HttpExchange.getDefaultInstance())),
+                     capture(1, Capture.newBuilder().setHttp(HttpExchange.newBuilder()
+                         .setRequest(HttpRequest.newBuilder()
+                             .addHeaders(Header.newBuilder().setName("Content-Type").setValue("application/json"))
+                             .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8("{\"a\":"))))
+                         .setResponse(HttpResponse.newBuilder()
+                             .addHeaders(Header.newBuilder().setName("content-type").setValue("image/png"))
+                             .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8("png")))))),
                      capture(2, Capture.newBuilder().setTunnel(TunnelSummary.getDefaultInstance())),
                      capture(4, Capture.newBuilder().setTunnel(TunnelSummary.getDefaultInstance())));
             }
@@ -88,6 +99,8 @@ class CollectorTest {
             }
             assertEquals(Map.of(CoverageMetric.PROXY_CAPTURES_DROPPED_QUEUE_FULL + "[p]", 2L,
                                 CoverageMetric.CAPTURES_RECEIVED + "[]", 3L,
+                                CoverageMetric.PARSE_FAILURE + "[json:syntax]", 1L,
+                                CoverageMetric.BODY_SKIPPED + "[image/png]", 1L,
                                 CoverageMetric.CAPTURE_ID_GAP + "[p]", 1L),
                          coverage);
             assertTrue(collector.logSummary().isEmpty(), "a summary resets the coverage");
