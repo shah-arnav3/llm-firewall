@@ -1,7 +1,6 @@
 package dev.llmfirewall.collector.label;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.llmfirewall.collector.coverage.CoverageCounters;
 import dev.llmfirewall.collector.coverage.CoverageMetric;
@@ -79,12 +78,17 @@ class LabelerTest {
 
     @Test
     void aThrowingAdapterFallsBackAndIsCounted() throws ParseException {
-        // A messages body whose "messages" is an object makes the adapter fail on get(i).
-        final LabeledExchange labeled = labeler.label(router.route("api.anthropic.com", "POST", "/v1/messages"),
-            json("req", "{\"messages\":{\"oops\":\"text\"}}"), ParsedBody.EMPTY);
+        final Labeler failing = new Labeler(coverage, (endpoint, body) -> {
+            throw new IllegalStateException("adapter bug");
+        }, (endpoint, body) -> {
+            throw new AssertionError("not reached");
+        });
+        final LabeledExchange labeled = failing.label(router.route("api.anthropic.com", "POST", "/v1/messages"),
+            json("req", "{\"messages\":[{\"role\":\"user\",\"content\":\"text\"}]}"), ParsedBody.EMPTY);
         assertEquals(Labeler.FALLBACK_ID, labeled.adapterId());
-        assertEquals(List.of(new Segment(Source.UNKNOWN, Direction.OUTBOUND, "text", "req:$.messages.oops")),
-                     labeled.result().segments());
-        assertTrue(counted().containsKey("ADAPTER_FAILURE[anthropic.messages@1]"));
+        assertEquals(List.of(new Segment(Source.UNKNOWN, Direction.OUTBOUND, "user", "req:$.messages[0].role"),
+                             new Segment(Source.UNKNOWN, Direction.OUTBOUND, "text", "req:$.messages[0].content")),
+                     labeled.result().segments(), "the fallback labels every string");
+        assertEquals(Map.of("ADAPTER_FAILURE[anthropic.messages@1]", 1L), counted());
     }
 }

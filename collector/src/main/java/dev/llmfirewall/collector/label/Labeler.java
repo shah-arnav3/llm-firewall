@@ -33,15 +33,24 @@ public final class Labeler {
 
     static final String FALLBACK_ID = "fallback@1";
 
-    private final AnthropicMessagesAdapter messages;
-    private final ClaudeAiCompletionAdapter completion;
-    private final ClaudeAiTitleAdapter titles = new ClaudeAiTitleAdapter();
+    /** Labels one side of an exchange on a routed endpoint, given the endpoint's name. */
+    interface Side {
+        LabelResult label(String endpoint, ParsedBody body);
+    }
+
+    private final Side requests;
+    private final Side responses;
     private final FallbackAdapter fallback = new FallbackAdapter();
     private final CoverageCounters coverage;
 
     public Labeler(AnthropicMessagesAdapter messages, CoverageCounters coverage) {
-        this.messages = messages;
-        this.completion = new ClaudeAiCompletionAdapter(messages);
+        this(coverage, requestSide(messages), responseSide(messages));
+    }
+
+    /** Tests only: labels routed endpoints with the given sides instead of the adapters. */
+    Labeler(CoverageCounters coverage, Side requests, Side responses) {
+        this.requests = requests;
+        this.responses = responses;
         this.coverage = coverage;
     }
 
@@ -58,8 +67,8 @@ public final class Labeler {
         final LabelResult req;
         final LabelResult resp;
         try {
-            req = labelRequest(endpoint.name(), request);
-            resp = labelResponse(endpoint.name(), response);
+            req = requests.label(endpoint.name(), request);
+            resp = responses.label(endpoint.name(), response);
         } catch (RuntimeException e) {
             coverage.increment(CoverageMetric.ADAPTER_FAILURE, adapterId);
             return fallback(endpoint, request, response);
@@ -92,16 +101,20 @@ public final class Labeler {
         };
     }
 
-    private LabelResult labelRequest(String endpoint, ParsedBody body) {
-        return switch (endpoint) {
+    private static Side requestSide(AnthropicMessagesAdapter messages) {
+        final ClaudeAiCompletionAdapter completion = new ClaudeAiCompletionAdapter(messages);
+        final ClaudeAiTitleAdapter titles = new ClaudeAiTitleAdapter();
+        return (endpoint, body) -> switch (endpoint) {
             case "messages_api" -> messages.labelRequest(body);
             case "completion" -> completion.labelRequest(body);
             default -> titles.labelRequest(endpoint, body);
         };
     }
 
-    private LabelResult labelResponse(String endpoint, ParsedBody body) {
-        return switch (endpoint) {
+    private static Side responseSide(AnthropicMessagesAdapter messages) {
+        final ClaudeAiCompletionAdapter completion = new ClaudeAiCompletionAdapter(messages);
+        final ClaudeAiTitleAdapter titles = new ClaudeAiTitleAdapter();
+        return (endpoint, body) -> switch (endpoint) {
             case "messages_api" -> messages.labelResponse(body);
             case "completion" -> completion.labelResponse(body);
             default -> titles.labelResponse(endpoint, body);
