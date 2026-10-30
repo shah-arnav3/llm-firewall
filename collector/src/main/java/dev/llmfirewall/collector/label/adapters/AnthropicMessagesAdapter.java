@@ -8,6 +8,7 @@ import dev.llmfirewall.collector.label.Segment;
 import dev.llmfirewall.collector.label.Source;
 import dev.llmfirewall.collector.parse.ParsedBody;
 import dev.llmfirewall.collector.parse.ParsedPart;
+import dev.llmfirewall.collector.parse.SseReplyAssembler;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -17,7 +18,7 @@ import java.util.TreeSet;
 
 /**
  * {@code POST /v1/messages} on api.anthropic.com, the public Messages API that Claude
- * Code uses. This is the request side (mapping v1):
+ * Code uses (mapping v1). Requests:
  * <ul>
  *   <li>{@code system}, as a string or {@code [].text}: UNKNOWN. Claude Code puts repo
  *       files such as CLAUDE.md and environment details there, which may be untrusted.</li>
@@ -32,9 +33,20 @@ import java.util.TreeSet;
  *       every string in {@code safeguards}: UNKNOWN. Tool definitions can come from MCP
  *       servers; the safeguard context carries paths and git remotes.</li>
  * </ul>
- * Known metadata fields (model, limits, flags, roles, block types, ids, cache control)
- * carry no text and give no segment. Every other field is labeled UNKNOWN in full, as
- * {@link FallbackAdapter} does, and its path is reported as unknown. Stateless and thread-safe.
+ * Replies, either an SSE stream (reassembled by {@link SseReplyAssembler}) or one JSON
+ * message, by content block:
+ * <ul>
+ *   <li>{@code text}, {@code thinking}, and {@code tool_use} or {@code server_tool_use}
+ *       input: MODEL_OUTPUT.</li>
+ *   <li>blocks whose type ends in {@code _tool_result} (web search, web fetch, code
+ *       execution): SERVER_TOOL_RESULT, every string in their content. So are a JSON
+ *       reply's {@code citations}, which quote the sources.</li>
+ *   <li>any other block type: UNKNOWN, and reported as unknown.</li>
+ * </ul>
+ * Known metadata fields (model, limits, flags, roles, block types, ids, cache control,
+ * usage, stop reasons) carry no text and give no segment. Every other field is labeled
+ * UNKNOWN in full, as {@link FallbackAdapter} does, and its path is reported as unknown.
+ * Thread-safe.
  */
 public final class AnthropicMessagesAdapter {
 
@@ -49,9 +61,87 @@ public final class AnthropicMessagesAdapter {
     private static final Set<String> TOOL_METADATA = Set.of("name", "type", "defer_loading", "eager_input_streaming", "model",
         "cache_control");
 
+    private static final Set<String> REPLY_METADATA = Set.of("id", "type", "role", "model", "stop_reason", "stop_sequence",
+        "stop_details", "usage", "container", "context_management", "diagnostics");
+
+    private final SseReplyAssembler assembler;
+
+    public AnthropicMessagesAdapter(SseReplyAssembler assembler) {
+        this.assembler = assembler;
+    }
+
+    /** Labels a reply body. Parts that are neither JSON nor SSE are labeled by {@link FallbackAdapter} and reported as unknown. */
+    public LabelResult labelResponse(ParsedBody body) {
+        final Labels out = new Labels(Direction.INBOUND);
+        Optional<String> model = Optional.empty();
+        for (ParsedPart part : body.parts()) {
+            if (part.kind() == ParsedPart.Kind.SSE_STREAM) {
+                final SseReplyAssembler.AssembledReply reply = assembler.assemble(part.sseEvents());
+                model = reply.model().isEmpty() ? model : Optional.of(reply.model());
+                for (SseReplyAssembler.Block block : reply.blocks()) {
+                    final String at = part.location() + ":sse:block[" + block.index() + "]";
+                    final String type = block.type().replaceFirst("^unknown:", "");
+                    final Source source = replySource(type);
+                    out.add(source == null ? Source.UNKNOWN : source, block.text(), at);
+                    if (source == null) {
+                        out.unknown.add("sse:block(" + safeType(type) + ")");
+                    }
+                }
+            } else if (part.kind() == ParsedPart.Kind.JSON && part.json().isObject()) {
+                final String at = part.location() + ":$";
+                for (Map.Entry<String, JsonNode> field : part.json().properties()) {
+                    final String key = field.getKey();
+                    if (key.equals("content")) {
+                        replyBlocks(field.getValue(), at + ".content", out);
+                    } else if (key.equals("model") && field.getValue().isTextual()) {
+                        model = Optional.of(field.getValue().textValue());
+                    } else if (!REPLY_METADATA.contains(key)) {
+                        out.unknown(field.getValue(), at + FallbackAdapter.keyPath(key), "$" + schemaKey(key));
+                    }
+                }
+            } else {
+                out.segments.addAll(new FallbackAdapter().segments(new ParsedBody(List.of(part), List.of(), false),
+                                                                   Direction.INBOUND));
+                out.unknown.add(part.location() + ":" + part.kind().name().toLowerCase());
+            }
+        }
+        return new LabelResult(List.copyOf(out.segments), Set.copyOf(out.unknown), new LabelResult.Attributes(model, false));
+    }
+
+    /** The source of a reply block's content, or null for a block type outside the schema. */
+    private static Source replySource(String type) {
+        if (type.equals("text") || type.equals("thinking") || type.equals("tool_use") || type.equals("server_tool_use")) {
+            return Source.MODEL_OUTPUT;
+        }
+        return type.endsWith("_tool_result") ? Source.SERVER_TOOL_RESULT : null;
+    }
+
+    private static void replyBlocks(JsonNode blocks, String path, Labels out) {
+        for (int i = 0; i < blocks.size(); i++) {
+            final JsonNode block = blocks.get(i);
+            final String at = path + "[" + i + "]";
+            final String type = block.path("type").asText();
+            final Source source = replySource(type);
+            for (Map.Entry<String, JsonNode> field : block.properties()) {
+                final String key = field.getKey();
+                if (BLOCK_METADATA.contains(key)) {
+                    continue;
+                }
+                if (key.equals("citations")) {
+                    out.json(field.getValue(), at + ".citations", Source.SERVER_TOOL_RESULT);
+                } else if (source == null) {
+                    out.unknown(field.getValue(), at + FallbackAdapter.keyPath(key),
+                                "$.content[](" + safeType(type) + ")" + schemaKey(key));
+                } else {
+                    out.json(field.getValue(), at + FallbackAdapter.keyPath(key), source);
+                }
+            }
+        }
+    }
+
     /** Labels a request body. Non-JSON parts are labeled by {@link FallbackAdapter} and reported as unknown. */
     public LabelResult labelRequest(ParsedBody body) {
-        final Labels out = new Labels();
+        final Labels out = new Labels(Direction.OUTBOUND);
         Optional<String> model = Optional.empty();
         for (ParsedPart part : body.parts()) {
             if (part.kind() != ParsedPart.Kind.JSON || !part.json().isObject()) {
@@ -190,25 +280,30 @@ public final class AnthropicMessagesAdapter {
 
     /** The segments and unknown paths being collected. */
     private static final class Labels {
+        final Direction direction;
         final List<Segment> segments = new ArrayList<>();
         final TreeSet<String> unknown = new TreeSet<>();
 
+        Labels(Direction direction) {
+            this.direction = direction;
+        }
+
         void add(Source source, String text, String location) {
             if (!text.isEmpty()) {
-                segments.add(new Segment(source, Direction.OUTBOUND, text, location));
+                segments.add(new Segment(source, direction, text, location));
             }
         }
 
         /** Every string under {@code node}, labeled {@code source}. */
         void json(JsonNode node, String location, Source source) {
             final List<Segment> found = new ArrayList<>();
-            FallbackAdapter.json(node, location, Direction.OUTBOUND, found);
+            FallbackAdapter.json(node, location, direction, found);
             found.forEach(s -> segments.add(new Segment(source, s.direction(), s.text(), s.location())));
         }
 
         /** A field outside the schema: labeled UNKNOWN in full, and its schema path reported. */
         void unknown(JsonNode node, String location, String schemaPath) {
-            FallbackAdapter.json(node, location, Direction.OUTBOUND, segments);
+            FallbackAdapter.json(node, location, direction, segments);
             unknown.add(schemaPath);
         }
     }

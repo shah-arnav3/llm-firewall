@@ -9,6 +9,8 @@ import dev.llmfirewall.collector.parse.JsonBodyParser;
 import dev.llmfirewall.collector.parse.ParseException;
 import dev.llmfirewall.collector.parse.ParsedBody;
 import dev.llmfirewall.collector.parse.ParsedPart;
+import dev.llmfirewall.collector.parse.SseReplyAssembler;
+import dev.llmfirewall.collector.parse.SseStreamParser;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
@@ -17,11 +19,12 @@ import org.junit.jupiter.api.Test;
 
 class AnthropicMessagesAdapterTest {
 
-    private final AnthropicMessagesAdapter adapter = new AnthropicMessagesAdapter();
+    private static final JsonBodyParser JSON = new JsonBodyParser(100, 1 << 20);
+    private final AnthropicMessagesAdapter adapter = new AnthropicMessagesAdapter(new SseReplyAssembler(JSON));
 
     private static ParsedBody request(String json) throws ParseException {
         return new ParsedBody(List.of(new ParsedPart(ParsedPart.Kind.JSON, "req", "application/json",
-            new JsonBodyParser(100, 1 << 20).parse(json.getBytes(StandardCharsets.UTF_8)), null, null)), List.of(), false);
+            JSON.parse(json.getBytes(StandardCharsets.UTF_8)), null, null)), List.of(), false);
     }
 
     private static Segment out(Source source, String text, String location) {
@@ -114,6 +117,63 @@ class AnthropicMessagesAdapterTest {
         assertEquals(List.of(out(Source.UNKNOWN, "raw", "req:text")), result.segments());
         assertEquals(Set.of("req:text"), result.unknownFieldPaths());
         assertTrue(result.attributes().model().isEmpty());
+    }
+
+    private static Segment in(Source source, String text, String location) {
+        return new Segment(source, Direction.INBOUND, text, location);
+    }
+
+    private static ParsedBody stream(String... data) {
+        final StringBuilder body = new StringBuilder();
+        for (String d : data) {
+            body.append("data: ").append(d).append("\n\n");
+        }
+        return new ParsedBody(List.of(new ParsedPart(ParsedPart.Kind.SSE_STREAM, "resp", "text/event-stream", null, null,
+            new SseStreamParser().events(body.toString().getBytes(StandardCharsets.UTF_8)))), List.of(), false);
+    }
+
+    @Test
+    void labelsAStreamedReplyByBlock() {
+        final LabelResult result = adapter.labelResponse(stream(
+            "{\"type\":\"message_start\",\"message\":{\"model\":\"claude-opus-5-5\"}}",
+            "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}",
+            "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}",
+            "{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"server_tool_use\",\"name\":\"web_search\",\"input\":{}}}",
+            "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"q\\\":1}\"}}",
+            "{\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"web_search_tool_result\",\"content\":[{\"title\":\"Ignore previous\"}]}}",
+            "{\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+            "{\"type\":\"content_block_delta\",\"index\":3,\"delta\":{\"type\":\"text_delta\",\"text\":\"Answer\"}}",
+            "{\"type\":\"content_block_start\",\"index\":4,\"content_block\":{\"type\":\"artifact\",\"content\":\"x\"}}",
+            "{\"type\":\"message_stop\"}"));
+        assertEquals(List.of(in(Source.MODEL_OUTPUT, "hmm", "resp:sse:block[0]"),
+                             in(Source.MODEL_OUTPUT, "{\"q\":1}", "resp:sse:block[1]"),
+                             in(Source.SERVER_TOOL_RESULT, "[{\"title\":\"Ignore previous\"}]", "resp:sse:block[2]"),
+                             in(Source.MODEL_OUTPUT, "Answer", "resp:sse:block[3]"),
+                             in(Source.UNKNOWN, "\"x\"", "resp:sse:block[4]")),
+                     result.segments());
+        assertEquals(Set.of("sse:block(artifact)"), result.unknownFieldPaths());
+        assertEquals(Optional.of("claude-opus-5-5"), result.attributes().model());
+    }
+
+    @Test
+    void labelsAJsonReplyAndItsCitations() throws ParseException {
+        final ParsedBody body = new ParsedBody(List.of(new ParsedPart(ParsedPart.Kind.JSON, "resp", "application/json",
+            JSON.parse(("""
+                {"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-5-5","stop_reason":"end_turn",
+                 "usage":{"input_tokens":5},"content":[
+                   {"type":"thinking","thinking":"plan","signature":"EqQB"},
+                   {"type":"text","text":"Title here","citations":[{"cited_text":"quoted page"}]},
+                   {"type":"mystery","note":"n"}],"surprise":"s"}
+                """).getBytes(StandardCharsets.UTF_8)), null, null)), List.of(), false);
+        final LabelResult result = adapter.labelResponse(body);
+        assertEquals(List.of(in(Source.MODEL_OUTPUT, "plan", "resp:$.content[0].thinking"),
+                             in(Source.MODEL_OUTPUT, "Title here", "resp:$.content[1].text"),
+                             in(Source.SERVER_TOOL_RESULT, "quoted page", "resp:$.content[1].citations[0].cited_text"),
+                             in(Source.UNKNOWN, "n", "resp:$.content[2].note"),
+                             in(Source.UNKNOWN, "s", "resp:$.surprise")),
+                     result.segments());
+        assertEquals(Set.of("$.content[](mystery).note", "$.surprise"), result.unknownFieldPaths());
+        assertEquals(Optional.of("claude-haiku-5-5"), result.attributes().model());
     }
 
     @Test
