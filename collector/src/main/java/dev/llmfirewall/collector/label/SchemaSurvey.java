@@ -18,8 +18,10 @@ import java.util.regex.Pattern;
  * Records the shape of a routed endpoint's bodies, never their values: each distinct
  * JSON key path with its value type is counted once per body as
  * SCHEMA_SURVEY[{@code <endpoint> <part>:<path>:<type>}], for example
- * {@code completion req:$.prompt:string}. Array indices collapse to {@code []}, and keys
- * that are not plain identifiers become {@code [*]}, as in {@link FallbackAdapter}.
+ * {@code completion req:$.prompt:string}. Array indices collapse to {@code []}. Keys
+ * that are not plain identifiers, as in {@link FallbackAdapter}, and keys that look like
+ * ids ({@link EndpointRouter#isIdLike}, such as a map keyed by tool-use id) become
+ * {@code [*]}, so one shape is counted per field, not per id.
  * Types are {@code string}, {@code number}, {@code boolean}, {@code null},
  * {@code object} (empty) and {@code array} (empty).
  *
@@ -79,7 +81,8 @@ public final class SchemaSurvey {
     private static void shape(JsonNode node, String path, TreeSet<String> shapes) {
         if (node.isObject() && !node.isEmpty()) {
             for (Map.Entry<String, JsonNode> field : node.properties()) {
-                shape(field.getValue(), path + FallbackAdapter.keyPath(field.getKey()), shapes);
+                final String key = field.getKey();
+                shape(field.getValue(), path + (EndpointRouter.isIdLike(key) ? "[*]" : FallbackAdapter.keyPath(key)), shapes);
             }
         } else if (node.isArray() && !node.isEmpty()) {
             for (JsonNode element : node) {

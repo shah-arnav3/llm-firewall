@@ -36,6 +36,11 @@ public final class EndpointRouter {
         "[0-9]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{16,}"
         + "|(?=.{8,})(?=.*[0-9].*[0-9]).*");
 
+    /** Whether a path segment or key looks like an identifier ({@link #ID_LIKE}) rather than a word. */
+    public static boolean isIdLike(String segment) {
+        return ID_LIKE.matcher(segment).matches();
+    }
+
     private static Route route(String name, String host, String method, String template) {
         return new Route(name, host, method, template.substring(1).split("/", -1));
     }
@@ -54,7 +59,7 @@ public final class EndpointRouter {
         }
         final StringBuilder template = new StringBuilder();
         for (String segment : segments) {
-            template.append('/').append(ID_LIKE.matcher(segment).matches() ? "{id}" : segment);
+            template.append('/').append(isIdLike(segment) ? "{id}" : segment);
         }
         return new EndpointKey("", h, m, template.toString(), Map.of(), false);
     }

@@ -54,6 +54,14 @@ class SchemaSurveyTest {
     }
 
     @Test
+    void collapsesIdLikeKeys() throws ParseException {
+        survey.survey(COMPLETION, jsonBody("resp", "{\"tool_uses\":{\"toolu_011GBiWwA1jve497uAWKe9KL\":{\"outcome\":\"ok\"},"
+            + "\"toolu_01LEBm4Mkgp5B77D7oDyjCv5\":{\"outcome\":\"ok\"}},\"windows\":{\"5h\":1}}"));
+        assertEquals(Map.of("completion resp:$.tool_uses[*].outcome:string", 1L, "completion resp:$.windows.5h:number", 1L),
+                     surveyed());
+    }
+
+    @Test
     void countsEachShapeOncePerBody() throws ParseException {
         survey.survey(COMPLETION, jsonBody("req", "{\"a\":[\"x\",\"y\",\"z\"]}"));
         survey.survey(COMPLETION, jsonBody("req", "{\"a\":[\"x\"]}"));
