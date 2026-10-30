@@ -115,4 +115,14 @@ class AnthropicMessagesAdapterTest {
         assertEquals(Set.of("req:text"), result.unknownFieldPaths());
         assertTrue(result.attributes().model().isEmpty());
     }
+
+    @Test
+    void scansCitationsInRequestHistory() throws ParseException {
+        assertEquals(List.of(out(Source.MODEL_OUTPUT, "said", "req:$.messages[0].content[0].text"),
+                             out(Source.UNKNOWN, "quoted", "req:$.messages[0].content[0].citations[0].cited_text")),
+                     adapter.labelRequest(request("""
+                         {"messages":[{"role":"assistant","content":[{"type":"text","text":"said",
+                           "citations":[{"cited_text":"quoted"}]}]}]}
+                         """)).segments());
+    }
 }

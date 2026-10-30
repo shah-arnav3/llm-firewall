@@ -27,7 +27,7 @@ import java.util.TreeSet;
  *   <li>{@code document} blocks with a {@code text} source: ATTACHMENT. Image and base64
  *       document data is binary and not labeled.</li>
  *   <li>assistant turns' {@code text}, {@code thinking} and {@code tool_use} input: MODEL_OUTPUT
- *       (history being re-sent).</li>
+ *       (history being re-sent). Their {@code citations} quote sources: UNKNOWN.</li>
  *   <li>{@code tools[].description} and every string in {@code tools[].input_schema}, and
  *       every string in {@code safeguards}: UNKNOWN. Tool definitions can come from MCP
  *       servers; the safeguard context carries paths and git remotes.</li>
@@ -45,7 +45,7 @@ public final class AnthropicMessagesAdapter {
         "metadata", "thinking", "output_config", "context_management", "diagnostics", "thread", "tool_choice",
         "stop_sequences", "service_tier");
     private static final Set<String> BLOCK_METADATA = Set.of("type", "id", "tool_use_id", "is_error", "cache_control",
-        "name", "signature", "citations");
+        "name", "signature");
     private static final Set<String> TOOL_METADATA = Set.of("name", "type", "defer_loading", "eager_input_streaming", "model",
         "cache_control");
 
@@ -122,6 +122,10 @@ public final class AnthropicMessagesAdapter {
                 final JsonNode value = field.getValue();
                 final String fieldPath = at + FallbackAdapter.keyPath(key);
                 if (BLOCK_METADATA.contains(key)) {
+                    continue;
+                }
+                if (key.equals("citations")) {
+                    out.json(value, fieldPath, Source.UNKNOWN);  // Quoted from sources: history, but untrusted.
                     continue;
                 }
                 switch (type + "." + key) {
