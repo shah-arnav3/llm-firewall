@@ -185,4 +185,15 @@ class AnthropicMessagesAdapterTest {
                            "citations":[{"cited_text":"quoted"}]}]}]}
                          """)).segments());
     }
+
+    @Test
+    void labelsStreamedCitationsAsServerToolResults() {
+        final LabelResult result = adapter.labelResponse(stream(
+            "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+            "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Per the page\"}}",
+            "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"citations_delta\",\"citation\":{\"cited_text\":\"quoted\"}}}"));
+        assertEquals(List.of(in(Source.MODEL_OUTPUT, "Per the page", "resp:sse:block[0]"),
+                             in(Source.SERVER_TOOL_RESULT, "[{\"cited_text\":\"quoted\"}]", "resp:sse:block[0].citations")),
+                     result.segments());
+    }
 }

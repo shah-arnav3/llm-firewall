@@ -39,8 +39,8 @@ import java.util.TreeSet;
  *   <li>{@code text}, {@code thinking}, and {@code tool_use} or {@code server_tool_use}
  *       input: MODEL_OUTPUT.</li>
  *   <li>blocks whose type ends in {@code _tool_result} (web search, web fetch, code
- *       execution): SERVER_TOOL_RESULT, every string in their content. So are a JSON
- *       reply's {@code citations}, which quote the sources.</li>
+ *       execution): SERVER_TOOL_RESULT, every string in their content. So are a block's
+ *       {@code citations}, which quote the sources.</li>
  *   <li>any other block type: UNKNOWN, and reported as unknown.</li>
  * </ul>
  * Known metadata fields (model, limits, flags, roles, block types, ids, cache control,
@@ -83,6 +83,7 @@ public final class AnthropicMessagesAdapter {
                     final String type = block.type().replaceFirst("^unknown:", "");
                     final Source source = replySource(type);
                     out.add(source == null ? Source.UNKNOWN : source, block.text(), at);
+                    out.add(Source.SERVER_TOOL_RESULT, block.citations(), at + ".citations");
                     if (source == null) {
                         out.unknown.add("sse:block(" + safeType(type) + ")");
                     }

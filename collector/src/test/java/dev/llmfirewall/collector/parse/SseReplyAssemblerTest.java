@@ -110,4 +110,19 @@ class SseReplyAssemblerTest {
         assertFalse(reply.complete());
         assertTrue(assemble(START, STOP).complete());
     }
+
+    @Test
+    void keepsCitationsApartFromTheText() {
+        final AssembledReply reply = assemble(
+            START,
+            "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\",\"citations\":[{\"cited_text\":\"a\"}]}}",
+            "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Per the page\"}}",
+            "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"citations_delta\",\"citation\":{\"cited_text\":\"b\"}}}",
+            "{\"type\":\"content_block_stop\",\"index\":0}",
+            STOP);
+        assertEquals(List.of(new Block(0, "text", "Per the page", "", true, "[{\"cited_text\":\"a\"},{\"cited_text\":\"b\"}]")),
+                     reply.blocks());
+        assertEquals("", assemble(START, "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":"
+                                         + "{\"type\":\"text\",\"text\":\"x\",\"citations\":[]}}").blocks().get(0).citations());
+    }
 }

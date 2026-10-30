@@ -1,6 +1,7 @@
 package dev.llmfirewall.collector.parse;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -25,6 +26,8 @@ import java.util.TreeMap;
  *   <li>Any other block type becomes {@code unknown:<type>}, and its text is the
  *       {@code content} it started with (as JSON) followed by the raw JSON of each delta,
  *       so nothing it carried escapes scanning.</li>
+ *   <li>Citations, on a known block's start event or in {@code citations_delta} deltas, are
+ *       collected into the block's {@code citations}, not its text.</li>
  *   <li>Deltas for a block whose start was never seen are kept, as {@code unknown:missing_start}.</li>
  *   <li>{@code signature_delta} deltas are opaque and dropped.</li>
  * </ul>
@@ -38,8 +41,17 @@ public final class SseReplyAssembler {
      * @param type     {@code text}, {@code thinking}, {@code tool_use}, {@code server_tool_use} or {@code unknown:<type>}
      * @param text     the block's concatenated content
      * @param toolName for tool blocks, the tool name; otherwise empty
+     * @param citations the block's citations as one JSON array, from its start event and its
+     *                  {@code citations_delta} deltas; empty if it has none. They quote sources,
+     *                  so they are kept apart from the block's own text.
      */
-    public record Block(int index, String type, String text, String toolName, boolean complete) {}
+    public record Block(int index, String type, String text, String toolName, boolean complete, String citations) {
+
+        /** A block without citations. */
+        public Block(int index, String type, String text, String toolName, boolean complete) {
+            this(index, type, text, toolName, complete, "");
+        }
+    }
 
     /** {@code model} and {@code stopReason} are empty when the stream did not carry them. */
     public record AssembledReply(String model, String stopReason, List<Block> blocks, boolean complete) {}
@@ -101,6 +113,7 @@ public final class SseReplyAssembler {
         private final String type;
         private final String toolName;
         private final StringBuilder text = new StringBuilder();
+        private final ArrayNode citations = JsonNodeFactory.instance.arrayNode();
         private boolean complete;
 
         private BlockBuilder(int index, String type, String toolName) {
@@ -116,6 +129,9 @@ public final class SseReplyAssembler {
                                                           rawType.endsWith("tool_use") ? block.path("name").asText("") : "");
             if (known) {
                 builder.text.append(block.path(rawType.equals("thinking") ? "thinking" : "text").asText(""));
+                if (block.path("citations").isArray()) {
+                    builder.citations.addAll((ArrayNode) block.get("citations"));
+                }
             } else if (block.has("content")) {
                 builder.text.append(block.get("content").toString());
             }
@@ -127,6 +143,7 @@ public final class SseReplyAssembler {
                 case "text_delta" -> text.append(delta.path("text").asText(""));
                 case "thinking_delta" -> text.append(delta.path("thinking").asText(""));
                 case "input_json_delta" -> text.append(delta.path("partial_json").asText(""));
+                case "citations_delta" -> citations.add(delta.path("citation"));
                 case "signature_delta" -> {
                     // An opaque signature over the thinking block, not content.
                 }
@@ -135,7 +152,7 @@ public final class SseReplyAssembler {
         }
 
         Block build() {
-            return new Block(index, type, text.toString(), toolName, complete);
+            return new Block(index, type, text.toString(), toolName, complete, citations.isEmpty() ? "" : citations.toString());
         }
     }
 }
