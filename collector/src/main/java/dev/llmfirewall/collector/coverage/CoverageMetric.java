@@ -35,4 +35,10 @@ public enum CoverageMetric {
     BODY_SKIPPED,
     /** JSON key paths and value types seen on a routed endpoint, never values [endpoint part:path:type]. */
     SCHEMA_SURVEY,
+    /** Exchanges on an endpoint no adapter knows, so all their text is UNKNOWN [host method path_template]. */
+    UNKNOWN_ENDPOINT,
+    /** Fields outside an adapter's schema, labeled UNKNOWN [adapter_id json_key_path]. */
+    SCHEMA_DRIFT,
+    /** Adapters that threw; the fallback labeled the exchange instead [adapter_id]. */
+    ADAPTER_FAILURE,
 }
