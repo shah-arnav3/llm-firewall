@@ -13,25 +13,52 @@ class CaptureGapTrackerTest {
 
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-27T12:00:00Z"), ZoneOffset.UTC);
     private static final LocalDate DAY = LocalDate.of(2026, 10, 27);
+    private static final long WINDOW = CaptureGapTracker.REORDER_WINDOW;
 
     private final CoverageCounters coverage = new CoverageCounters(10, CLOCK);
     private final CaptureGapTracker tracker = new CaptureGapTracker(coverage);
 
+    private static CoverageCounters.Delta gap(String instance, long n) {
+        return new CoverageCounters.Delta(DAY, CoverageMetric.CAPTURE_ID_GAP, instance, n);
+    }
+
     @Test
     void consecutiveIdsHaveNoGap() {
-        assertEquals(0, tracker.observe("a", 1));
-        assertEquals(0, tracker.observe("a", 2));
-        assertEquals(0, tracker.observe("a", 3));
+        for (long id = 1; id <= 5; id++) {
+            assertEquals(0, tracker.observe("a", id));
+        }
         assertEquals(List.of(), coverage.drain());
     }
 
     @Test
-    void countsMissingCaptureIds() {
+    void neighboursArrivingOutOfOrderAreNotAGap() {
         tracker.observe("a", 1);
-        assertEquals(3, tracker.observe("a", 5));
-        assertEquals(0, tracker.observe("a", 6));
-        assertEquals(1, tracker.observe("a", 8));
-        assertEquals(List.of(new CoverageCounters.Delta(DAY, CoverageMetric.CAPTURE_ID_GAP, "a", 4)), coverage.drain());
+        tracker.observe("a", 3);
+        tracker.observe("a", 2);
+        tracker.observe("a", 5);
+        tracker.observe("a", 4);
+        tracker.observe("a", 5 + WINDOW);
+        for (long id = 6; id < 5 + WINDOW; id++) {
+            tracker.observe("a", id);
+        }
+        assertEquals(List.of(), coverage.drain(), "every id arrived in the end");
+    }
+
+    @Test
+    void anIdStillMissingPastTheWindowIsAGap() {
+        tracker.observe("a", 1);
+        assertEquals(0, tracker.observe("a", 3), "2 may still arrive");
+        assertEquals(0, tracker.observe("a", 2 + WINDOW));
+        assertEquals(1, tracker.observe("a", 3 + WINDOW), "2 is now more than the window behind");
+        assertEquals(List.of(gap("a", 1)), coverage.drain().stream()
+            .filter(d -> d.metric() == CoverageMetric.CAPTURE_ID_GAP).toList());
+    }
+
+    @Test
+    void aJumpLongerThanTheWindowCountsTheFarIdsAtOnce() {
+        tracker.observe("a", 1);
+        assertEquals(10, tracker.observe("a", 2 + WINDOW + 10), "ids 2..11 are already out of reach");
+        assertEquals(List.of(gap("a", 10)), coverage.drain());
     }
 
     @Test
@@ -41,21 +68,24 @@ class CaptureGapTrackerTest {
     }
 
     @Test
-    void aNewProxyInstanceResetsTracking() {
+    void aNewInstanceCountsWhatTheOldOneStillOwed() {
         tracker.observe("a", 10);
-        assertEquals(0, tracker.observe("b", 1));
-        assertEquals(1, tracker.observe("b", 3));
-        assertEquals(List.of(new CoverageCounters.Delta(DAY, CoverageMetric.CAPTURE_ID_GAP, "b", 1)), coverage.drain());
+        tracker.observe("a", 13);
+        assertEquals(2, tracker.observe("b", 1), "11 and 12 can no longer arrive");
+        assertEquals(0, tracker.observe("b", 3));
+        assertEquals(List.of(gap("a", 2)), coverage.drain());
     }
 
     @Test
-    void anIdThatDoesNotIncreaseIsAProtocolError() {
+    void aRepeatedOrTooOldIdIsAProtocolError() {
         tracker.observe("a", 5);
-        assertEquals(0, tracker.observe("a", 5));
-        assertEquals(0, tracker.observe("a", 3));
-        assertEquals(0, tracker.observe("a", 6), "the baseline did not move back");
+        tracker.observe("a", 5);
+        tracker.observe("a", 3);
+        tracker.observe("a", 7);
+        tracker.observe("a", 6);
+        tracker.observe("a", 6);
         assertEquals(List.of(new CoverageCounters.Delta(DAY, CoverageMetric.IPC_PROTOCOL_ERRORS,
-                                                        CoverageCounters.NO_DIMENSION, 2)),
+                                                        CoverageCounters.NO_DIMENSION, 3)),
                      coverage.drain());
     }
 }

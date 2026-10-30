@@ -202,7 +202,8 @@ class CaptureReceiverTest {
     void tracksCaptureIdGaps() throws Exception {
         started();
         try (SocketChannel proxy = connect()) {
-            send(proxy, hello(1, "a"), capture(1), capture(4));
+            // 2 and 3 count once the jump puts them more than the reorder window behind.
+            send(proxy, hello(1, "a"), capture(1), capture(4 + CaptureGapTracker.REORDER_WINDOW));
             next();
             next();
         }

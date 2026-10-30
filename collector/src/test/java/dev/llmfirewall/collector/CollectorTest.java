@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.llmfirewall.collector.config.CollectorConfig;
+import dev.llmfirewall.collector.coverage.CaptureGapTracker;
 import dev.llmfirewall.collector.coverage.CoverageCounters.Delta;
 import dev.llmfirewall.collector.coverage.CoverageMetric;
 import com.google.protobuf.ByteString;
@@ -84,7 +85,9 @@ class CollectorTest {
                              .addHeaders(Header.newBuilder().setName("content-type").setValue("image/png"))
                              .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8("png")))))),
                      capture(2, Capture.newBuilder().setTunnel(TunnelSummary.getDefaultInstance())),
-                     capture(4, Capture.newBuilder().setTunnel(TunnelSummary.getDefaultInstance())));
+                     // 3 counts as lost once the jump puts it more than the reorder window behind.
+                     capture(4 + CaptureGapTracker.REORDER_WINDOW,
+                             Capture.newBuilder().setTunnel(TunnelSummary.getDefaultInstance())));
             }
             final long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
             while (collector.captureCounts().values().stream().mapToLong(Long::longValue).sum() < 3
