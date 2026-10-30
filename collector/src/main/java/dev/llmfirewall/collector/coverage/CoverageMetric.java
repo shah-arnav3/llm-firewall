@@ -33,4 +33,6 @@ public enum CoverageMetric {
     PARSE_FAILURE,
     /** Bodies of a media type that is not parsed [media type]. */
     BODY_SKIPPED,
+    /** JSON key paths and value types seen on a routed endpoint, never values [endpoint part:path:type]. */
+    SCHEMA_SURVEY,
 }
