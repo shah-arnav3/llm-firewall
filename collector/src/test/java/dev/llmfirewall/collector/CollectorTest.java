@@ -78,9 +78,12 @@ class CollectorTest {
                      Frame.newBuilder().setHello(StreamHello.newBuilder().setProtocolVersion(1).setProxyInstanceId("p")).build(),
                      Frame.newBuilder().setStats(ProxyStats.newBuilder().setProxyInstanceId("p").setCapturesDroppedQueueFull(2)).build(),
                      capture(1, Capture.newBuilder().setHttp(HttpExchange.newBuilder()
+                         .setConnectHost("api.anthropic.com")
                          .setRequest(HttpRequest.newBuilder()
+                             .setMethod("POST")
+                             .setTarget("/v1/messages")
                              .addHeaders(Header.newBuilder().setName("Content-Type").setValue("application/json"))
-                             .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8("{\"a\":"))))
+                             .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8("{\"model\":\"m\"}"))))
                          .setResponse(HttpResponse.newBuilder()
                              .addHeaders(Header.newBuilder().setName("content-type").setValue("image/png"))
                              .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8("png")))))),
@@ -102,7 +105,7 @@ class CollectorTest {
             }
             assertEquals(Map.of(CoverageMetric.PROXY_CAPTURES_DROPPED_QUEUE_FULL + "[p]", 2L,
                                 CoverageMetric.CAPTURES_RECEIVED + "[]", 3L,
-                                CoverageMetric.PARSE_FAILURE + "[json:syntax]", 1L,
+                                CoverageMetric.SCHEMA_SURVEY + "[messages_api req:$.model:string]", 1L,
                                 CoverageMetric.BODY_SKIPPED + "[image/png]", 1L,
                                 CoverageMetric.CAPTURE_ID_GAP + "[p]", 1L),
                          coverage);
