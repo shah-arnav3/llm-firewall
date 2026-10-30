@@ -1,6 +1,7 @@
 package dev.llmfirewall.collector.label;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.llmfirewall.collector.label.adapters.AnthropicMessagesAdapter;
@@ -28,33 +29,62 @@ class AnthropicMessagesAdapterTest {
     }
 
     @Test
-    void labelsSystemAndConversationText() throws ParseException {
+    void labelsAClaudeCodeRequest() throws ParseException {
         final LabelResult result = adapter.labelRequest(request("""
             {"model":"claude-opus-5-5","max_tokens":32000,"stream":true,"metadata":{"user_id":"u1"},
-             "thinking":{"type":"adaptive"},
              "system":[{"type":"text","text":"You are Claude Code.","cache_control":{"type":"ephemeral"}}],
              "messages":[
                {"role":"user","content":"fix the bug"},
-               {"role":"assistant","content":[{"type":"text","text":"Reading it."}]},
-               {"role":"assistant","content":"Done."},
-               {"role":"user","content":[{"type":"text","text":"<system-reminder>be careful</system-reminder>",
-                                          "cache_control":{"type":"ephemeral"}}]}]}
+               {"role":"assistant","content":[
+                  {"type":"thinking","thinking":"Look at main.c","signature":"EqQB"},
+                  {"type":"text","text":"Reading it."},
+                  {"type":"tool_use","id":"t1","name":"Read","input":{"path":"main.c"}}]},
+               {"role":"user","content":[
+                  {"type":"tool_result","tool_use_id":"t1","is_error":false,"content":"int main() {}"},
+                  {"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":"second"},{"type":"tool_reference","tool_name":"Grep"}]},
+                  {"type":"text","text":"<system-reminder>be careful</system-reminder>"}]}],
+             "tools":[{"name":"Read","description":"Reads a file","input_schema":{"type":"object",
+                       "properties":{"path":{"type":"string","description":"File to read"}}}}],
+             "safeguards":[{"classifier_context":{"git_state":{"cwd":"/Users/me/repo"}}}]}
             """));
         assertEquals(List.of(
             out(Source.UNKNOWN, "You are Claude Code.", "req:$.system[0].text"),
             out(Source.UNKNOWN, "fix the bug", "req:$.messages[0].content"),
-            out(Source.MODEL_OUTPUT, "Reading it.", "req:$.messages[1].content[0].text"),
-            out(Source.MODEL_OUTPUT, "Done.", "req:$.messages[2].content"),
-            out(Source.UNKNOWN, "<system-reminder>be careful</system-reminder>", "req:$.messages[3].content[0].text")),
+            out(Source.MODEL_OUTPUT, "Look at main.c", "req:$.messages[1].content[0].thinking"),
+            out(Source.MODEL_OUTPUT, "Reading it.", "req:$.messages[1].content[1].text"),
+            out(Source.MODEL_OUTPUT, "main.c", "req:$.messages[1].content[2].input.path"),
+            out(Source.TOOL_RESULT, "int main() {}", "req:$.messages[2].content[0].content"),
+            out(Source.TOOL_RESULT, "second", "req:$.messages[2].content[1].content[0].text"),
+            out(Source.UNKNOWN, "<system-reminder>be careful</system-reminder>", "req:$.messages[2].content[2].text"),
+            out(Source.UNKNOWN, "Reads a file", "req:$.tools[0].description"),
+            out(Source.UNKNOWN, "object", "req:$.tools[0].input_schema.type"),
+            out(Source.UNKNOWN, "string", "req:$.tools[0].input_schema.properties.path.type"),
+            out(Source.UNKNOWN, "File to read", "req:$.tools[0].input_schema.properties.path.description"),
+            out(Source.UNKNOWN, "/Users/me/repo", "req:$.safeguards[0].classifier_context.git_state.cwd")),
             result.segments());
         assertEquals(Set.of(), result.unknownFieldPaths());
-        assertEquals(new LabelResult.Attributes(Optional.of("claude-opus-5-5"), false), result.attributes());
+        assertEquals(new LabelResult.Attributes(Optional.of("claude-opus-5-5"), true), result.attributes());
     }
 
     @Test
-    void acceptsAPlainStringSystemPrompt() throws ParseException {
-        assertEquals(List.of(out(Source.UNKNOWN, "Be brief.", "req:$.system")),
-                     adapter.labelRequest(request("{\"system\":\"Be brief.\"}")).segments());
+    void acceptsAPlainStringSystemPromptAndAssistantString() throws ParseException {
+        assertEquals(List.of(out(Source.UNKNOWN, "Be brief.", "req:$.system"),
+                             out(Source.MODEL_OUTPUT, "Done.", "req:$.messages[0].content")),
+                     adapter.labelRequest(request("{\"system\":\"Be brief.\",\"messages\":[{\"role\":\"assistant\",\"content\":\"Done.\"}]}"))
+                         .segments());
+    }
+
+    @Test
+    void labelsTextDocumentsAndSkipsImageData() throws ParseException {
+        final LabelResult result = adapter.labelRequest(request("""
+            {"messages":[{"role":"user","content":[
+              {"type":"document","source":{"type":"text","media_type":"text/plain","data":"contract text"}},
+              {"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0x"}},
+              {"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0K"}}]}]}
+            """));
+        assertEquals(List.of(out(Source.ATTACHMENT, "contract text", "req:$.messages[0].content[0].source.data")),
+                     result.segments());
+        assertFalse(result.attributes().hasToolResults());
     }
 
     @Test
@@ -62,18 +92,17 @@ class AnthropicMessagesAdapterTest {
         final LabelResult result = adapter.labelRequest(request("""
             {"model":"m","new_field":{"note":"hidden"},"messages":[{"role":"user","extra":"x",
               "content":[{"type":"text","text":"hi","annotation":"y"},{"type":"video","frames":"z"}]}],
-             "tools":[{"name":"T","description":"d"}]}
+             "tools":[{"name":"T","hint":"h"}]}
             """));
         assertEquals(List.of(out(Source.UNKNOWN, "hidden", "req:$.new_field.note"),
                              out(Source.UNKNOWN, "x", "req:$.messages[0].extra"),
                              out(Source.UNKNOWN, "hi", "req:$.messages[0].content[0].text"),
                              out(Source.UNKNOWN, "y", "req:$.messages[0].content[0].annotation"),
                              out(Source.UNKNOWN, "z", "req:$.messages[0].content[1].frames"),
-                             out(Source.UNKNOWN, "T", "req:$.tools[0].name"),
-                             out(Source.UNKNOWN, "d", "req:$.tools[0].description")),
+                             out(Source.UNKNOWN, "h", "req:$.tools[0].hint")),
                      result.segments());
         assertEquals(Set.of("$.new_field", "$.messages[].extra", "$.messages[].content[](text).annotation",
-                            "$.messages[].content[](video).frames", "$.tools"),
+                            "$.messages[].content[](video).frames", "$.tools[].hint"),
                      result.unknownFieldPaths());
     }
 
