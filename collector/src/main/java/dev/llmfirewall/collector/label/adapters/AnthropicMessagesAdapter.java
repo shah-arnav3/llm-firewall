@@ -46,6 +46,8 @@ import java.util.TreeSet;
  * Known metadata fields (model, limits, flags, roles, block types, ids, cache control,
  * usage, stop reasons) carry no text and give no segment. Every other field is labeled
  * UNKNOWN in full, as {@link FallbackAdapter} does, and its path is reported as unknown.
+ * So is a value of the wrong JSON type where the schema expects an array or an object,
+ * reported as {@code path(type)}, for example {@code $.messages(object)}.
  * Thread-safe.
  */
 public final class AnthropicMessagesAdapter {
@@ -118,9 +120,15 @@ public final class AnthropicMessagesAdapter {
     }
 
     private static void replyBlocks(JsonNode blocks, String path, Labels out) {
+        if (!out.array(blocks, path, "$.content")) {
+            return;
+        }
         for (int i = 0; i < blocks.size(); i++) {
             final JsonNode block = blocks.get(i);
             final String at = path + "[" + i + "]";
+            if (!out.object(block, at, "$.content[]")) {
+                continue;
+            }
             final String type = block.path("type").asText();
             final Source source = replySource(type);
             for (Map.Entry<String, JsonNode> field : block.properties()) {
@@ -179,9 +187,15 @@ public final class AnthropicMessagesAdapter {
     }
 
     private static void messages(JsonNode messages, String path, Labels out) {
+        if (!out.array(messages, path, "$.messages")) {
+            return;
+        }
         for (int i = 0; i < messages.size(); i++) {
             final JsonNode message = messages.get(i);
             final String at = path + "[" + i + "]";
+            if (!out.object(message, at, "$.messages[]")) {
+                continue;
+            }
             final boolean assistant = message.path("role").asText().equals("assistant");
             for (Map.Entry<String, JsonNode> field : message.properties()) {
                 switch (field.getKey()) {
@@ -204,9 +218,15 @@ public final class AnthropicMessagesAdapter {
     }
 
     private static void blocks(JsonNode blocks, String path, boolean assistant, Labels out) {
+        if (!out.array(blocks, path, "$.messages[].content")) {
+            return;
+        }
         for (int i = 0; i < blocks.size(); i++) {
             final JsonNode block = blocks.get(i);
             final String at = path + "[" + i + "]";
+            if (!out.object(block, at, "$.messages[].content[]")) {
+                continue;
+            }
             final String type = block.path("type").asText();
             for (Map.Entry<String, JsonNode> field : block.properties()) {
                 final String key = field.getKey();
@@ -247,6 +267,10 @@ public final class AnthropicMessagesAdapter {
         for (int i = 0; i < value.size(); i++) {
             final JsonNode block = value.get(i);
             final String at = path + "[" + i + "]";
+            if (!block.isObject()) {
+                out.json(block, at, source);
+                continue;
+            }
             for (Map.Entry<String, JsonNode> field : block.properties()) {
                 final String key = field.getKey();
                 final boolean binary = key.equals("source") && block.path("type").asText().equals("image");
@@ -258,8 +282,14 @@ public final class AnthropicMessagesAdapter {
     }
 
     private static void tools(JsonNode tools, String path, Labels out) {
+        if (!out.array(tools, path, "$.tools")) {
+            return;
+        }
         for (int i = 0; i < tools.size(); i++) {
             final String at = path + "[" + i + "]";
+            if (!out.object(tools.get(i), at, "$.tools[]")) {
+                continue;
+            }
             for (Map.Entry<String, JsonNode> field : tools.get(i).properties()) {
                 final String key = field.getKey();
                 if (key.equals("description") || key.equals("input_schema")) {
@@ -300,6 +330,23 @@ public final class AnthropicMessagesAdapter {
             final List<Segment> found = new ArrayList<>();
             FallbackAdapter.json(node, location, direction, found);
             found.forEach(s -> segments.add(new Segment(source, s.direction(), s.text(), s.location())));
+        }
+
+        /** Whether {@code node} is an array; if not, it is labeled UNKNOWN in full and reported as {@code schemaPath(type)}. */
+        boolean array(JsonNode node, String location, String schemaPath) {
+            return expect(node.isArray(), node, location, schemaPath);
+        }
+
+        /** Whether {@code node} is an object; if not, it is labeled UNKNOWN in full and reported as {@code schemaPath(type)}. */
+        boolean object(JsonNode node, String location, String schemaPath) {
+            return expect(node.isObject(), node, location, schemaPath);
+        }
+
+        private boolean expect(boolean ok, JsonNode node, String location, String schemaPath) {
+            if (!ok) {
+                unknown(node, location, schemaPath + "(" + node.getNodeType().name().toLowerCase() + ")");
+            }
+            return ok;
         }
 
         /** A field outside the schema: labeled UNKNOWN in full, and its schema path reported. */

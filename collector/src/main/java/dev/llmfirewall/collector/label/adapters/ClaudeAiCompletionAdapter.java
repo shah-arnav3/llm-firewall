@@ -27,7 +27,8 @@ import java.util.TreeSet;
  * </ul>
  * Known metadata (model and settings, file ids, message ids, tool flags and server ids)
  * gives no segment. Every other field is labeled UNKNOWN in full and its path reported as
- * unknown. Replies use the Messages streaming grammar, plus {@code conversation_ready}
+ * unknown, and so is a value of the wrong JSON type where an array or object is expected,
+ * as {@code path(type)}. Replies use the Messages streaming grammar, plus {@code conversation_ready}
  * and {@code message_limit} events that carry no content, so they are labeled by
  * {@link AnthropicMessagesAdapter#labelResponse}. Thread-safe.
  */
@@ -92,6 +93,10 @@ public final class ClaudeAiCompletionAdapter {
     }
 
     private static void tools(JsonNode tools, String path, List<Segment> segments, TreeSet<String> unknown) {
+        if (!tools.isArray()) {
+            wrongType(tools, path, "$.tools", segments, unknown);
+            return;
+        }
         for (int i = 0; i < tools.size(); i++) {
             fields(tools.get(i), path + "[" + i + "]", "$.tools[]", TOOL_METADATA, segments, unknown);
         }
@@ -104,6 +109,10 @@ public final class ClaudeAiCompletionAdapter {
      */
     private static void fields(JsonNode object, String path, String schemaPath, Set<String> metadata,
                                List<Segment> segments, TreeSet<String> unknown) {
+        if (!object.isObject()) {
+            wrongType(object, path, schemaPath, segments, unknown);
+            return;
+        }
         for (Map.Entry<String, JsonNode> field : object.properties()) {
             final String key = field.getKey();
             if (metadata.contains(key)) {
@@ -114,6 +123,13 @@ public final class ClaudeAiCompletionAdapter {
                 unknown.add(schemaPath + schemaKey(key));
             }
         }
+    }
+
+    /** A value of the wrong JSON type for the schema: labeled UNKNOWN in full and reported as {@code schemaPath(type)}. */
+    private static void wrongType(JsonNode node, String path, String schemaPath, List<Segment> segments,
+                                  TreeSet<String> unknown) {
+        label(node, path, Source.UNKNOWN, segments);
+        unknown.add(schemaPath + "(" + node.getNodeType().name().toLowerCase() + ")");
     }
 
     /** Every string under {@code node}, labeled {@code source}. */

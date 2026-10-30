@@ -82,4 +82,15 @@ class ClaudeAiCompletionAdapterTest {
         assertEquals(List.of(new Segment(Source.MODEL_OUTPUT, Direction.INBOUND, "Hello", "resp:sse:block[0]")),
                      adapter.labelResponse(body).segments());
     }
+    @Test
+    void labelsValuesOfTheWrongTypeInsteadOfThrowingOrDroppingThem() throws ParseException {
+        final LabelResult result = adapter.labelRequest(request(
+            "{\"tools\":[\"loose\",{\"name\":\"t\"}],\"create_conversation_params\":\"oops\"}"));
+        assertEquals(List.of(out(Source.UNKNOWN, "loose", "req:$.tools[0]"),
+                             out(Source.UNKNOWN, "oops", "req:$.create_conversation_params")),
+                     result.segments());
+        assertEquals(Set.of("$.tools[](string)", "$.create_conversation_params(string)"), result.unknownFieldPaths());
+        assertEquals(Set.of("$.tools(object)"),
+                     adapter.labelRequest(request("{\"tools\":{\"a\":\"b\"}}")).unknownFieldPaths());
+    }
 }

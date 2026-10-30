@@ -196,4 +196,31 @@ class AnthropicMessagesAdapterTest {
                              in(Source.SERVER_TOOL_RESULT, "[{\"cited_text\":\"quoted\"}]", "resp:sse:block[0].citations")),
                      result.segments());
     }
+    @Test
+    void labelsValuesOfTheWrongTypeInsteadOfThrowingOrDroppingThem() throws ParseException {
+        final LabelResult result = adapter.labelRequest(request("""
+            {"messages":[{"role":"user","content":["loose string",{"type":"tool_result","content":["inner"]}]},"stray"],
+             "tools":"not a list","system":[{"type":"text","text":"s"},"bare"]}
+            """));
+        assertEquals(List.of(out(Source.UNKNOWN, "loose string", "req:$.messages[0].content[0]"),
+                             out(Source.TOOL_RESULT, "inner", "req:$.messages[0].content[1].content[0]"),
+                             out(Source.UNKNOWN, "stray", "req:$.messages[1]"),
+                             out(Source.UNKNOWN, "not a list", "req:$.tools"),
+                             out(Source.UNKNOWN, "s", "req:$.system[0].text"),
+                             out(Source.UNKNOWN, "bare", "req:$.system[1]")),
+                     result.segments());
+        assertEquals(Set.of("$.messages[].content[](string)", "$.messages[](string)", "$.tools(string)"),
+                     result.unknownFieldPaths());
+        assertEquals(Set.of("$.messages(object)"),
+                     adapter.labelRequest(request("{\"messages\":{\"oops\":\"text\"}}")).unknownFieldPaths());
+    }
+
+    @Test
+    void labelsAReplyWhoseContentIsNotAList() throws ParseException {
+        final ParsedBody body = new ParsedBody(List.of(new ParsedPart(ParsedPart.Kind.JSON, "resp", "application/json",
+            JSON.parse("{\"content\":\"plain\"}".getBytes(StandardCharsets.UTF_8)), null, null)), List.of(), false);
+        final LabelResult result = adapter.labelResponse(body);
+        assertEquals(List.of(in(Source.UNKNOWN, "plain", "resp:$.content")), result.segments());
+        assertEquals(Set.of("$.content(string)"), result.unknownFieldPaths());
+    }
 }
