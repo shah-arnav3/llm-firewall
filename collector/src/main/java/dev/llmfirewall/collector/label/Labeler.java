@@ -5,6 +5,7 @@ import dev.llmfirewall.collector.coverage.CoverageMetric;
 import dev.llmfirewall.collector.label.adapters.AnthropicMessagesAdapter;
 import dev.llmfirewall.collector.label.adapters.ClaudeAiCompletionAdapter;
 import dev.llmfirewall.collector.label.adapters.ClaudeAiTitleAdapter;
+import dev.llmfirewall.collector.label.adapters.ClaudeAiUploadAdapter;
 import dev.llmfirewall.collector.label.adapters.FallbackAdapter;
 import dev.llmfirewall.collector.parse.ParsedBody;
 import java.util.ArrayList;
@@ -19,7 +20,7 @@ import java.util.TreeSet;
  * <ul>
  *   <li>{@code messages_api}: {@link AnthropicMessagesAdapter}; {@code completion}:
  *       {@link ClaudeAiCompletionAdapter}; {@code title} and {@code generate_title}:
- *       {@link ClaudeAiTitleAdapter}.</li>
+ *       {@link ClaudeAiTitleAdapter}; {@code upload}: {@link ClaudeAiUploadAdapter}.</li>
  *   <li>An unrouted endpoint is labeled by {@link FallbackAdapter}, all UNKNOWN, and
  *       counted as UNKNOWN_ENDPOINT[{@code host method template}] when it carried any text.</li>
  *   <li>Each field outside the adapter's schema counts as SCHEMA_DRIFT[{@code adapter part:path}],
@@ -109,6 +110,7 @@ public final class Labeler {
             case "messages_api" -> AnthropicMessagesAdapter.ID + "@" + AnthropicMessagesAdapter.VERSION;
             case "completion" -> ClaudeAiCompletionAdapter.ID + "@" + ClaudeAiCompletionAdapter.VERSION;
             case "title", "generate_title" -> ClaudeAiTitleAdapter.ID + "@" + ClaudeAiTitleAdapter.VERSION;
+            case "upload" -> ClaudeAiUploadAdapter.ID + "@" + ClaudeAiUploadAdapter.VERSION;
             default -> FALLBACK_ID;
         };
     }
@@ -116,9 +118,11 @@ public final class Labeler {
     private static Side requestSide(AnthropicMessagesAdapter messages) {
         final ClaudeAiCompletionAdapter completion = new ClaudeAiCompletionAdapter(messages);
         final ClaudeAiTitleAdapter titles = new ClaudeAiTitleAdapter();
+        final ClaudeAiUploadAdapter uploads = new ClaudeAiUploadAdapter();
         return (endpoint, body) -> switch (endpoint) {
             case "messages_api" -> messages.labelRequest(body);
             case "completion" -> completion.labelRequest(body);
+            case "upload" -> uploads.labelRequest(body);
             default -> titles.labelRequest(endpoint, body);
         };
     }
@@ -126,9 +130,11 @@ public final class Labeler {
     private static Side responseSide(AnthropicMessagesAdapter messages) {
         final ClaudeAiCompletionAdapter completion = new ClaudeAiCompletionAdapter(messages);
         final ClaudeAiTitleAdapter titles = new ClaudeAiTitleAdapter();
+        final ClaudeAiUploadAdapter uploads = new ClaudeAiUploadAdapter();
         return (endpoint, body) -> switch (endpoint) {
             case "messages_api" -> messages.labelResponse(body);
             case "completion" -> completion.labelResponse(body);
+            case "upload" -> uploads.labelResponse(body);
             default -> titles.labelResponse(endpoint, body);
         };
     }
