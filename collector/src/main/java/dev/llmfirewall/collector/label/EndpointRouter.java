@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
  *  POST claude.ai         /api/organizations/{org}/chat_conversations/{conv}/completion  completion
  *  POST claude.ai         /api/organizations/{org}/chat_conversations/{conv}/title       title
  *  POST claude.ai         /api/organizations/{org}/dust/generate_title_and_branch        generate_title
+ *  POST claude.ai         /api/organizations/{org}/conversations/{conv}/wiggle/upload-file  upload
  *  POST api.anthropic.com /v1/messages                                                   messages_api
  * </pre>
  * The query string is ignored, hosts and methods ignore case, and a {@code {var}} matches
@@ -29,6 +30,7 @@ public final class EndpointRouter {
         route("completion", "claude.ai", "POST", "/api/organizations/{org}/chat_conversations/{conv}/completion"),
         route("title", "claude.ai", "POST", "/api/organizations/{org}/chat_conversations/{conv}/title"),
         route("generate_title", "claude.ai", "POST", "/api/organizations/{org}/dust/generate_title_and_branch"),
+        route("upload", "claude.ai", "POST", "/api/organizations/{org}/conversations/{conv}/wiggle/upload-file"),
         route("messages_api", "api.anthropic.com", "POST", "/v1/messages"));
 
     /** A number, a UUID, 16 or more hex digits, or any segment of 8 or more characters with at least two digits. */

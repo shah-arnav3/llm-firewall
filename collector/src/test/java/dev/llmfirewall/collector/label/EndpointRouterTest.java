@@ -30,6 +30,10 @@ class EndpointRouterTest {
                                            "/api/organizations/" + ORG + "/chat_conversations/" + CONV + "/title").name());
         assertEquals("generate_title", router.route("claude.ai", "POST",
                                                     "/api/organizations/" + ORG + "/dust/generate_title_and_branch").name());
+        final EndpointKey upload = router.route("claude.ai", "POST",
+                                                "/api/organizations/" + ORG + "/conversations/" + CONV + "/wiggle/upload-file");
+        assertEquals("upload", upload.name());
+        assertEquals(Map.of("org", ORG, "conv", CONV), upload.pathParams());
         final EndpointKey messages = router.route("API.Anthropic.com", "post", "/v1/messages?beta=true");
         assertEquals("messages_api", messages.name());
         assertEquals("api.anthropic.com", messages.host());
