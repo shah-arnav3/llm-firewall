@@ -15,6 +15,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import org.junit.jupiter.api.Test;
 
@@ -90,5 +91,19 @@ class LabelerTest {
                              new Segment(Source.UNKNOWN, Direction.OUTBOUND, "text", "req:$.messages[0].content")),
                      labeled.result().segments(), "the fallback labels every string");
         assertEquals(Map.of("ADAPTER_FAILURE[anthropic.messages@1]", 1L), counted());
+    }
+    @Test
+    void aSkippedBinaryBodyIsNotDrift() throws ParseException {
+        final ParsedBody png = new ParsedBody(List.of(new ParsedPart(ParsedPart.Kind.BINARY_SKIPPED, "resp", "image/png",
+                                                                     null, null, null)), List.of(), false);
+        final String base = "/api/organizations/" + ORG + "/chat_conversations/" + CONV;
+        for (EndpointKey endpoint : List.of(router.route("api.anthropic.com", "POST", "/v1/messages"),
+                                            router.route("claude.ai", "POST", base + "/completion"),
+                                            router.route("claude.ai", "POST", base + "/title"))) {
+            final LabeledExchange labeled = labeler.label(endpoint, png, png);
+            assertEquals(List.of(), labeled.result().segments(), endpoint.name());
+            assertEquals(Set.of(), labeled.result().unknownFieldPaths(), endpoint.name());
+        }
+        assertEquals(Map.of(), counted());
     }
 }

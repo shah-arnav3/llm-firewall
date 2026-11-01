@@ -27,7 +27,8 @@ import java.util.TreeSet;
  *                  reply    title, branch_name      MODEL_OUTPUT
  * </pre>
  * Every other field, and any part that is not a JSON object, is labeled UNKNOWN in full
- * and its path reported as unknown. Stateless and thread-safe.
+ * and its path reported as unknown; a skipped binary body has no text and is not
+ * reported. Stateless and thread-safe.
  */
 public final class ClaudeAiTitleAdapter {
 
@@ -62,7 +63,9 @@ public final class ClaudeAiTitleAdapter {
         for (ParsedPart part : body.parts()) {
             if (part.kind() != ParsedPart.Kind.JSON || !part.json().isObject()) {
                 segments.addAll(new FallbackAdapter().segments(new ParsedBody(List.of(part), List.of(), false), direction));
-                unknown.add(part.location() + ":" + part.kind().name().toLowerCase());
+                if (part.kind() != ParsedPart.Kind.BINARY_SKIPPED) {  // A skipped body has no text and is counted already.
+                    unknown.add(part.location() + ":" + part.kind().name().toLowerCase());
+                }
                 continue;
             }
             for (Map.Entry<String, JsonNode> field : part.json().properties()) {

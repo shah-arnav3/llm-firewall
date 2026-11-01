@@ -72,7 +72,10 @@ public final class AnthropicMessagesAdapter {
         this.assembler = assembler;
     }
 
-    /** Labels a reply body. Parts that are neither JSON nor SSE are labeled by {@link FallbackAdapter} and reported as unknown. */
+    /**
+     * Labels a reply body. Parts that are neither JSON nor SSE are labeled by
+     * {@link FallbackAdapter} and reported as unknown, except a skipped binary body.
+     */
     public LabelResult labelResponse(ParsedBody body) {
         final Labels out = new Labels(Direction.INBOUND);
         Optional<String> model = Optional.empty();
@@ -105,7 +108,9 @@ public final class AnthropicMessagesAdapter {
             } else {
                 out.segments.addAll(new FallbackAdapter().segments(new ParsedBody(List.of(part), List.of(), false),
                                                                    Direction.INBOUND));
-                out.unknown.add(part.location() + ":" + part.kind().name().toLowerCase());
+                if (part.kind() != ParsedPart.Kind.BINARY_SKIPPED) {  // A skipped body has no text and is counted already.
+                    out.unknown.add(part.location() + ":" + part.kind().name().toLowerCase());
+                }
             }
         }
         return new LabelResult(List.copyOf(out.segments), Set.copyOf(out.unknown), new LabelResult.Attributes(model, false));
@@ -148,7 +153,10 @@ public final class AnthropicMessagesAdapter {
         }
     }
 
-    /** Labels a request body. Non-JSON parts are labeled by {@link FallbackAdapter} and reported as unknown. */
+    /**
+     * Labels a request body. Non-JSON parts are labeled by {@link FallbackAdapter} and
+     * reported as unknown, except a skipped binary body, which has no text.
+     */
     public LabelResult labelRequest(ParsedBody body) {
         final Labels out = new Labels(Direction.OUTBOUND);
         Optional<String> model = Optional.empty();
@@ -156,7 +164,9 @@ public final class AnthropicMessagesAdapter {
             if (part.kind() != ParsedPart.Kind.JSON || !part.json().isObject()) {
                 out.segments.addAll(new FallbackAdapter().segments(new ParsedBody(List.of(part), List.of(), false),
                                                                    Direction.OUTBOUND));
-                out.unknown.add(part.location() + ":" + part.kind().name().toLowerCase());
+                if (part.kind() != ParsedPart.Kind.BINARY_SKIPPED) {  // A skipped body has no text and is counted already.
+                    out.unknown.add(part.location() + ":" + part.kind().name().toLowerCase());
+                }
                 continue;
             }
             final String at = part.location() + ":$";

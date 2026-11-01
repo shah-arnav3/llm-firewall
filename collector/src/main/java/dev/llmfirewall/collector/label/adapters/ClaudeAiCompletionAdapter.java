@@ -54,7 +54,10 @@ public final class ClaudeAiCompletionAdapter {
         return replies.labelResponse(body);
     }
 
-    /** Labels a request body. Non-JSON parts are labeled by {@link FallbackAdapter} and reported as unknown. */
+    /**
+     * Labels a request body. Non-JSON parts are labeled by {@link FallbackAdapter} and
+     * reported as unknown, except a skipped binary body, which has no text.
+     */
     public LabelResult labelRequest(ParsedBody body) {
         final List<Segment> segments = new ArrayList<>();
         final TreeSet<String> unknown = new TreeSet<>();
@@ -63,7 +66,9 @@ public final class ClaudeAiCompletionAdapter {
             if (part.kind() != ParsedPart.Kind.JSON || !part.json().isObject()) {
                 segments.addAll(new FallbackAdapter().segments(new ParsedBody(List.of(part), List.of(), false),
                                                                Direction.OUTBOUND));
-                unknown.add(part.location() + ":" + part.kind().name().toLowerCase());
+                if (part.kind() != ParsedPart.Kind.BINARY_SKIPPED) {  // A skipped body has no text and is counted already.
+                    unknown.add(part.location() + ":" + part.kind().name().toLowerCase());
+                }
                 continue;
             }
             final String at = part.location() + ":$";
