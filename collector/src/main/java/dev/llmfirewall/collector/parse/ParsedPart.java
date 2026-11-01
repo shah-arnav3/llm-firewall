@@ -13,14 +13,32 @@ import java.util.List;
  * @param json      set when kind == JSON
  * @param text      set when kind == TEXT
  * @param sseEvents set when kind == SSE_STREAM (possibly empty)
+ * @param file      set when the part is an uploaded file, whether its text was read (TEXT) or not (BINARY_SKIPPED)
  */
 public record ParsedPart(Kind kind,
                          String location,
                          String mediaType,
                          JsonNode json,
                          String text,
-                         List<SseStreamParser.SseEvent> sseEvents) {
+                         List<SseStreamParser.SseEvent> sseEvents,
+                         FileInfo file) {
 
     /** BINARY_SKIPPED marks a body of a type that is not parsed; it carries no content. */
     public enum Kind { JSON, TEXT, SSE_STREAM, BINARY_SKIPPED }
+
+    /** A part that is not an uploaded file. */
+    public ParsedPart(Kind kind, String location, String mediaType, JsonNode json, String text,
+                      List<SseStreamParser.SseEvent> sseEvents) {
+        this(kind, location, mediaType, json, text, sseEvents, null);
+    }
+
+    /**
+     * File metadata that is safe to keep. The original filename is deliberately absent,
+     * because filenames often contain names and other personal details.
+     *
+     * @param fileType  the filename's lower-cased extension (letters and digits, at most 10),
+     *                  or the part's media type if there is none, or {@code unknown}
+     * @param sizeBytes the bytes captured for the file
+     */
+    public record FileInfo(String fileType, long sizeBytes) {}
 }
