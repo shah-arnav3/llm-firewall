@@ -26,12 +26,19 @@ import java.util.TreeSet;
  *       for example {@code anthropic.messages@1 req:$.new_field}.</li>
  *   <li>An adapter that throws counts as ADAPTER_FAILURE[{@code adapter}], and the
  *       fallback labels the whole exchange instead, so its text is still scanned.</li>
+ *   <li>A GET from a host that serves only the claude.ai app's own static files
+ *       (assets-proxy.anthropic.com) is not labeled: it is Anthropic's code, not the
+ *       user's data. It counts as STATIC_ASSETS_SKIPPED[{@code host}].</li>
  * </ul>
  * Thread-safe.
  */
 public final class Labeler {
 
     static final String FALLBACK_ID = "fallback@1";
+    static final String STATIC_ID = "static@1";
+
+    /** Hosts that serve only the claude.ai app's own JavaScript, CSS and translations. */
+    private static final Set<String> STATIC_HOSTS = Set.of("assets-proxy.anthropic.com");
 
     /** Labels one side of an exchange on a routed endpoint, given the endpoint's name. */
     interface Side {
@@ -55,6 +62,11 @@ public final class Labeler {
     }
 
     public LabeledExchange label(EndpointKey endpoint, ParsedBody request, ParsedBody response) {
+        if (endpoint.method().equals("GET") && STATIC_HOSTS.contains(endpoint.host())) {
+            coverage.increment(CoverageMetric.STATIC_ASSETS_SKIPPED, endpoint.host());
+            return new LabeledExchange(endpoint, STATIC_ID, new LabelResult(List.of(), Set.of(),
+                new LabelResult.Attributes(Optional.empty(), false)));
+        }
         final String adapterId = adapterId(endpoint);
         if (adapterId.equals(FALLBACK_ID)) {
             final LabeledExchange labeled = fallback(endpoint, request, response);

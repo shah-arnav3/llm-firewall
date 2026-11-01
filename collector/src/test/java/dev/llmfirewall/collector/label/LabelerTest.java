@@ -106,4 +106,17 @@ class LabelerTest {
         }
         assertEquals(Map.of(), counted());
     }
+    @Test
+    void skipsTheAppsStaticFiles() throws ParseException {
+        final LabeledExchange labeled = labeler.label(
+            router.route("assets-proxy.anthropic.com", "GET", "/claude-ai/v2/assets/v1/index-gIFc4pjg.js"),
+            ParsedBody.EMPTY, json("resp", "{\"greeting\":\"Hello\"}"));
+        assertEquals(Labeler.STATIC_ID, labeled.adapterId());
+        assertEquals(List.of(), labeled.result().segments());
+        assertEquals(Map.of("STATIC_ASSETS_SKIPPED[assets-proxy.anthropic.com]", 1L), counted());
+        assertEquals(Labeler.FALLBACK_ID,
+                     labeler.label(router.route("assets-proxy.anthropic.com", "POST", "/upload"),
+                                   json("req", "{\"a\":\"b\"}"), ParsedBody.EMPTY).adapterId(),
+                     "only fetches are skipped");
+    }
 }

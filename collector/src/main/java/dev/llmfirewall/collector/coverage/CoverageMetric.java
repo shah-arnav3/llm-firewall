@@ -43,4 +43,6 @@ public enum CoverageMetric {
     ADAPTER_FAILURE,
     /** Text segments labeled, ready for detection [source direction]. */
     SEGMENTS_LABELED,
+    /** Exchanges not labeled because they fetch the app's own static files [host]. */
+    STATIC_ASSETS_SKIPPED,
 }
