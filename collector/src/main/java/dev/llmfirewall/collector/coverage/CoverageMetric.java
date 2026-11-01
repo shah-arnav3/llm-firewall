@@ -41,4 +41,6 @@ public enum CoverageMetric {
     SCHEMA_DRIFT,
     /** Adapters that threw; the fallback labeled the exchange instead [adapter_id]. */
     ADAPTER_FAILURE,
+    /** Text segments labeled, ready for detection [source direction]. */
+    SEGMENTS_LABELED,
 }

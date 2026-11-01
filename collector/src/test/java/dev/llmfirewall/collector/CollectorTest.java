@@ -83,7 +83,8 @@ class CollectorTest {
                              .setMethod("POST")
                              .setTarget("/v1/messages")
                              .addHeaders(Header.newBuilder().setName("Content-Type").setValue("application/json"))
-                             .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8("{\"model\":\"m\"}"))))
+                             .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8(
+                                 "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"))))
                          .setResponse(HttpResponse.newBuilder()
                              .addHeaders(Header.newBuilder().setName("content-type").setValue("image/png"))
                              .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8("png")))))),
@@ -106,6 +107,9 @@ class CollectorTest {
             assertEquals(Map.of(CoverageMetric.PROXY_CAPTURES_DROPPED_QUEUE_FULL + "[p]", 2L,
                                 CoverageMetric.CAPTURES_RECEIVED + "[]", 3L,
                                 CoverageMetric.SCHEMA_SURVEY + "[messages_api req:$.model:string]", 1L,
+                                CoverageMetric.SCHEMA_SURVEY + "[messages_api req:$.messages[].content:string]", 1L,
+                                CoverageMetric.SCHEMA_SURVEY + "[messages_api req:$.messages[].role:string]", 1L,
+                                CoverageMetric.SEGMENTS_LABELED + "[UNKNOWN OUTBOUND]", 1L,
                                 CoverageMetric.BODY_SKIPPED + "[image/png]", 1L,
                                 CoverageMetric.CAPTURE_ID_GAP + "[p]", 1L),
                          coverage);

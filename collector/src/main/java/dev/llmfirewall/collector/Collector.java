@@ -3,16 +3,21 @@ package dev.llmfirewall.collector;
 import dev.llmfirewall.collector.config.CollectorConfig;
 import dev.llmfirewall.collector.coverage.CaptureGapTracker;
 import dev.llmfirewall.collector.coverage.CoverageCounters;
+import dev.llmfirewall.collector.coverage.CoverageMetric;
 import dev.llmfirewall.collector.coverage.ProxyStatsRecorder;
 import dev.llmfirewall.collector.ingest.CaptureReceiver;
 import dev.llmfirewall.collector.ingest.FrameDecoder;
 import dev.llmfirewall.collector.label.EndpointKey;
 import dev.llmfirewall.collector.label.EndpointRouter;
+import dev.llmfirewall.collector.label.Labeler;
+import dev.llmfirewall.collector.label.Segment;
+import dev.llmfirewall.collector.label.adapters.AnthropicMessagesAdapter;
 import dev.llmfirewall.collector.label.SchemaSurvey;
 import dev.llmfirewall.collector.parse.ContentDecoder;
 import dev.llmfirewall.collector.parse.JsonBodyParser;
 import dev.llmfirewall.collector.parse.ParsedBody;
 import dev.llmfirewall.collector.parse.ParserRegistry;
+import dev.llmfirewall.collector.parse.SseReplyAssembler;
 import dev.llmfirewall.collector.parse.SseStreamParser;
 import dev.llmfirewall.proto.v1.Capture;
 import dev.llmfirewall.proto.v1.Header;
@@ -33,10 +38,11 @@ import java.util.stream.Collectors;
 /**
  * The running collector, as far as it is built: it receives the proxy's frames, counts
  * captures by kind, parses each HTTP request and response body (which counts parse
- * failures and skipped media types), routes the request and surveys the bodies' JSON
- * shape on routed endpoints, records coverage (capture-id gaps and the proxy's own
- * stats), and logs both every {@code summaryInterval} and at close. Parsed bodies are
- * dropped once counted. Log lines hold counts, metric names, media types, failure codes,
+ * failures and skipped media types), routes the request, surveys the bodies' JSON shape
+ * on routed endpoints, labels their text (which counts unknown endpoints, schema drift,
+ * adapter failures and segments by source), records coverage (capture-id gaps and the
+ * proxy's own stats), and logs both every {@code summaryInterval} and at close. Parsed
+ * bodies and segments are dropped once counted. Log lines hold counts, metric names, media types, failure codes,
  * endpoint names, JSON key paths with value types, and proxy instance ids only, never
  * capture content.
  */
@@ -56,6 +62,7 @@ public final class Collector implements AutoCloseable {
     private final ParserRegistry parsers;
     private final EndpointRouter router = new EndpointRouter();
     private final SchemaSurvey survey;
+    private final Labeler labeler;
     private final Duration summaryInterval;
     private final Map<Capture.PayloadCase, Long> captures = new EnumMap<>(Capture.PayloadCase.class);
     private ScheduledExecutorService scheduler;
@@ -67,6 +74,7 @@ public final class Collector implements AutoCloseable {
         final JsonBodyParser json = new JsonBodyParser(JSON_MAX_NESTING_DEPTH, JSON_MAX_STRING_LENGTH);
         this.parsers = new ParserRegistry(new ContentDecoder(MAX_DECODED_BODY_BYTES), json, new SseStreamParser(), coverage);
         this.survey = new SchemaSurvey(json, coverage);
+        this.labeler = new Labeler(new AnthropicMessagesAdapter(new SseReplyAssembler(json)), coverage);
         this.receiver = new CaptureReceiver(config.ipc().socketDir(), config.ipc().socketName(),
                                             new FrameDecoder(config.ipc().maxFrameBytes()),
                                             new CaptureGapTracker(coverage), coverage, new CaptureReceiver.Sink() {
@@ -136,6 +144,9 @@ public final class Collector implements AutoCloseable {
         final EndpointKey endpoint = router.route(host, request.getMethod(), request.getTarget());
         survey.survey(endpoint, requestBody);
         survey.survey(endpoint, responseBody);
+        for (Segment segment : labeler.label(endpoint, requestBody, responseBody).result().segments()) {
+            coverage.increment(CoverageMetric.SEGMENTS_LABELED, segment.source() + " " + segment.direction());
+        }
     }
 
     /** The first value of a header, matched ignoring case; null if absent or redacted. */
