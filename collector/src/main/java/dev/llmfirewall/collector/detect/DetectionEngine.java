@@ -27,6 +27,8 @@ import java.util.Set;
  *       </ul>
  *       Outbound MODEL_OUTPUT (earlier assistant turns that a client re-sends) gets no
  *       detector: it was scanned when it arrived.</li>
+ *   <li>Skip a segment that gets some category if {@link SegmentDeduplicator} has seen
+ *       it, counting SEGMENTS_DEDUPLICATED.</li>
  *   <li>Run each detector of those categories. A detector that throws is counted as
  *       DETECTOR_FAILURE[name], contributes nothing for that segment, and does not
  *       affect the others.</li>
@@ -40,15 +42,18 @@ public final class DetectionEngine {
     private static final System.Logger LOG = System.getLogger(DetectionEngine.class.getName());
 
     private final Map<FindingCategory, List<Detector>> detectors = new LinkedHashMap<>();
+    private final SegmentDeduplicator dedup;
     private final CoverageCounters coverage;
 
     public DetectionEngine(List<Detector> piiDetectors,
                            List<Detector> injectionDetectors,
                            List<Detector> exfilDetectors,
+                           SegmentDeduplicator dedup,
                            CoverageCounters coverage) {
         detectors.put(FindingCategory.PII, List.copyOf(piiDetectors));
         detectors.put(FindingCategory.INJECTION, List.copyOf(injectionDetectors));
         detectors.put(FindingCategory.EXFIL, List.copyOf(exfilDetectors));
+        this.dedup = dedup;
         this.coverage = coverage;
     }
 
@@ -56,8 +61,16 @@ public final class DetectionEngine {
     public List<Detection> detect(LabeledExchange exchange) {
         final List<Detection> out = new ArrayList<>();
         for (Segment segment : exchange.result().segments()) {
+            final Set<FindingCategory> categories = categories(segment);
+            if (categories.isEmpty()) {
+                continue;
+            }
+            if (!dedup.firstSighting(exchange.endpoint(), segment)) {
+                coverage.increment(CoverageMetric.SEGMENTS_DEDUPLICATED);
+                continue;
+            }
             final List<Detection> found = new ArrayList<>();
-            for (FindingCategory category : categories(segment)) {
+            for (FindingCategory category : categories) {
                 for (Detector detector : detectors.get(category)) {
                     found.addAll(run(detector, segment));
                 }

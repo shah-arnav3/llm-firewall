@@ -72,7 +72,7 @@ class DetectionEngineTest {
         final Fake pii = new Fake("pii", FindingCategory.PII);
         final Fake injection = new Fake("injection", FindingCategory.INJECTION);
         final Fake exfil = new Fake("exfil", FindingCategory.EXFIL);
-        new DetectionEngine(List.of(pii), List.of(injection), List.of(exfil),
+        new DetectionEngine(List.of(pii), List.of(injection), List.of(exfil), new SegmentDeduplicator(10),
                             new CoverageCounters(10, Clock.systemDefaultZone()))
             .detect(exchange(segment(source, direction)));
         final List<String> out = new ArrayList<>();
@@ -82,6 +82,11 @@ class DetectionEngineTest {
             }
         }
         return out;
+    }
+
+    /** An engine with only these PII detectors, counting into {@link #coverage}. */
+    private DetectionEngine engine(Detector... pii) {
+        return new DetectionEngine(List.of(pii), List.of(), List.of(), new SegmentDeduplicator(10), coverage);
     }
 
     private Map<String, Long> counted() {
@@ -128,10 +133,10 @@ class DetectionEngineTest {
             throw new IllegalStateException("boom");
         });
         final Fake working = new Fake("working", FindingCategory.PII, x -> List.of(hit(x, "working", "email", 0, 4, 1.0)));
-        final Segment s = segment(Source.USER_TYPED, Direction.OUTBOUND);
-        final List<Detection> found = new DetectionEngine(List.of(broken, working), List.of(), List.of(), coverage)
-            .detect(exchange(s, s));
-        assertEquals(List.of(hit(s, "working", "email", 0, 4, 1.0), hit(s, "working", "email", 0, 4, 1.0)), found);
+        final Segment a = new Segment(Source.USER_TYPED, Direction.OUTBOUND, "aaaa", "req:$.a");
+        final Segment b = new Segment(Source.USER_TYPED, Direction.OUTBOUND, "bbbb", "req:$.b");
+        final List<Detection> found = engine(broken, working).detect(exchange(a, b));
+        assertEquals(List.of(hit(a, "working", "email", 0, 4, 1.0), hit(b, "working", "email", 0, 4, 1.0)), found);
         assertEquals(Map.of("DETECTOR_FAILURE[broken]", 2L), counted());
     }
 
@@ -144,8 +149,7 @@ class DetectionEngineTest {
             hit(x, "model", "PERSON", 9, 12, 0.5),  // Touches 0-9 but does not overlap: kept.
             hit(x, "model", "EMAIL", 2, 4, 1.0)));  // Another subtype: kept.
         final Fake other = new Fake("other", FindingCategory.PII, x -> List.of(hit(x, "other", "PERSON", 1, 3, 0.4)));
-        final List<Detection> found = new DetectionEngine(List.of(model, other), List.of(), List.of(), coverage)
-            .detect(exchange(s));
+        final List<Detection> found = engine(model, other).detect(exchange(s));
         // Another detector's overlapping PERSON is kept too.
         assertEquals(List.of(hit(s, "model", "PERSON", 0, 9, 0.9),
                              hit(s, "other", "PERSON", 1, 3, 0.4),
@@ -161,8 +165,26 @@ class DetectionEngineTest {
         // The first segment's hit starts later, but segment order wins.
         final Fake pii = new Fake("pii", FindingCategory.PII,
                                   x -> List.of(hit(x, "pii", "t", x == first ? 3 : 0, 4, 1.0)));
-        final List<Detection> found = new DetectionEngine(List.of(pii), List.of(), List.of(), coverage)
-            .detect(exchange(first, second));
+        final List<Detection> found = engine(pii).detect(exchange(first, second));
         assertEquals(List.of("req:$.a", "req:$.b"), found.stream().map(d -> d.segment().location()).toList());
+    }
+
+    @Test
+    void duplicateSegmentIsSkippedAndCounted() {
+        final Fake pii = new Fake("pii", FindingCategory.PII);
+        final DetectionEngine engine = engine(pii);
+        final Segment s = segment(Source.USER_TYPED, Direction.OUTBOUND);
+        engine.detect(exchange(s));
+        engine.detect(exchange(s, segment(Source.UNKNOWN, Direction.OUTBOUND)));
+        assertEquals(List.of("USER_TYPED OUTBOUND", "UNKNOWN OUTBOUND"), pii.seen);
+        assertEquals(Map.of("SEGMENTS_DEDUPLICATED[]", 1L), counted());
+    }
+
+    @Test
+    void unscannedSegmentsAreNotDeduplicated() {
+        final DetectionEngine engine = engine();
+        final Segment replayed = segment(Source.MODEL_OUTPUT, Direction.OUTBOUND);
+        engine.detect(exchange(replayed, replayed));
+        assertEquals(Map.of(), counted());
     }
 }

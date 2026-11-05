@@ -45,6 +45,8 @@ public enum CoverageMetric {
     SEGMENTS_LABELED,
     /** Exchanges not labeled because they fetch the app's own static files [host]. */
     STATIC_ASSETS_SKIPPED,
+    /** Segments not scanned because the same text was already scanned in that conversation. */
+    SEGMENTS_DEDUPLICATED,
     /** Detectors that threw on a segment, which then has no hits from them [detector name]. */
     DETECTOR_FAILURE,
 }
