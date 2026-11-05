@@ -5,10 +5,16 @@ import dev.llmfirewall.collector.coverage.CaptureGapTracker;
 import dev.llmfirewall.collector.coverage.CoverageCounters;
 import dev.llmfirewall.collector.coverage.CoverageMetric;
 import dev.llmfirewall.collector.coverage.ProxyStatsRecorder;
+import dev.llmfirewall.collector.detect.Detection;
+import dev.llmfirewall.collector.detect.DetectionEngine;
+import dev.llmfirewall.collector.detect.SegmentDeduplicator;
+import dev.llmfirewall.collector.detect.pii.BuiltinPiiPatterns;
+import dev.llmfirewall.collector.detect.pii.RegexPiiDetector;
 import dev.llmfirewall.collector.ingest.CaptureReceiver;
 import dev.llmfirewall.collector.ingest.FrameDecoder;
 import dev.llmfirewall.collector.label.EndpointKey;
 import dev.llmfirewall.collector.label.EndpointRouter;
+import dev.llmfirewall.collector.label.LabeledExchange;
 import dev.llmfirewall.collector.label.Labeler;
 import dev.llmfirewall.collector.label.Segment;
 import dev.llmfirewall.collector.label.adapters.AnthropicMessagesAdapter;
@@ -40,11 +46,13 @@ import java.util.stream.Collectors;
  * captures by kind, parses each HTTP request and response body (which counts parse
  * failures and skipped media types), routes the request, surveys the bodies' JSON shape
  * on routed endpoints, labels their text (which counts unknown endpoints, schema drift,
- * adapter failures and segments by source), records coverage (capture-id gaps and the
- * proxy's own stats), and logs both every {@code summaryInterval} and at close. Parsed
- * bodies and segments are dropped once counted. Log lines hold counts, metric names, media types, failure codes,
- * endpoint names, JSON key paths with value types, and proxy instance ids only, never
- * capture content.
+ * adapter failures and segments by source), runs the built-in regex PII patterns over
+ * the segments (counting detections by category, subtype and source), records coverage
+ * (capture-id gaps and the proxy's own stats), and logs both every
+ * {@code summaryInterval} and at close. Parsed bodies, segments and detections are
+ * dropped once counted. Log lines hold counts, metric names, media types, failure
+ * codes, endpoint names, JSON key paths with value types, detector subtypes and
+ * segment locations, and proxy instance ids only, never capture content.
  */
 public final class Collector implements AutoCloseable {
 
@@ -54,6 +62,7 @@ public final class Collector implements AutoCloseable {
     static final int MAX_DECODED_BODY_BYTES = 64 << 20;
     static final int JSON_MAX_NESTING_DEPTH = 200;
     static final int JSON_MAX_STRING_LENGTH = 32 << 20;
+    static final int DEDUP_CACHE_ENTRIES = 100_000;
 
     private static final System.Logger LOG = System.getLogger(Collector.class.getName());
 
@@ -63,6 +72,7 @@ public final class Collector implements AutoCloseable {
     private final EndpointRouter router = new EndpointRouter();
     private final SchemaSurvey survey;
     private final Labeler labeler;
+    private final DetectionEngine detection;
     private final Duration summaryInterval;
     private final Map<Capture.PayloadCase, Long> captures = new EnumMap<>(Capture.PayloadCase.class);
     private ScheduledExecutorService scheduler;
@@ -75,6 +85,9 @@ public final class Collector implements AutoCloseable {
         this.parsers = new ParserRegistry(new ContentDecoder(MAX_DECODED_BODY_BYTES), json, new SseStreamParser(), coverage);
         this.survey = new SchemaSurvey(json, coverage);
         this.labeler = new Labeler(new AnthropicMessagesAdapter(new SseReplyAssembler(json)), coverage);
+        this.detection = new DetectionEngine(
+            List.of(new RegexPiiDetector(BuiltinPiiPatterns.select(BuiltinPiiPatterns.allNames()))), List.of(), List.of(),
+            new SegmentDeduplicator(DEDUP_CACHE_ENTRIES), coverage);
         this.receiver = new CaptureReceiver(config.ipc().socketDir(), config.ipc().socketName(),
                                             new FrameDecoder(config.ipc().maxFrameBytes()),
                                             new CaptureGapTracker(coverage), coverage, new CaptureReceiver.Sink() {
@@ -144,8 +157,12 @@ public final class Collector implements AutoCloseable {
         final EndpointKey endpoint = router.route(host, request.getMethod(), request.getTarget());
         survey.survey(endpoint, requestBody);
         survey.survey(endpoint, responseBody);
-        for (Segment segment : labeler.label(endpoint, requestBody, responseBody).result().segments()) {
+        final LabeledExchange labeled = labeler.label(endpoint, requestBody, responseBody);
+        for (Segment segment : labeled.result().segments()) {
             coverage.increment(CoverageMetric.SEGMENTS_LABELED, segment.source() + " " + segment.direction());
+        }
+        for (Detection d : detection.detect(labeled)) {
+            coverage.increment(CoverageMetric.DETECTIONS, d.category() + " " + d.subtype() + " " + d.segment().source());
         }
     }
 

@@ -142,8 +142,9 @@ collector:
     child_max_heap_mb: 512
     parse_timeout_ms: 30000
     max_extracted_chars: 2000000
-  # (host, method, path template, segment hash) keys already scanned are skipped,
-  # so histories that are re-sent each turn (Claude Code) are not re-reported.
+  # Segments already scanned, keyed by (host, conversation, source, direction, text
+  # hash), are skipped, so histories that are re-sent each turn (Claude Code) are not
+  # re-reported.
   dedup_cache_entries: 100000
 
 detect:

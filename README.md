@@ -448,13 +448,13 @@ inside: each request and its response get an `"http"` record with the method, th
 path without its query string, the status, timings and body sizes. After a WebSocket
 upgrade, each message gets a `"websocket"` record with its direction, opcode and size.
 With `proxy.mode: full` it keeps bodies (up to the `capture` caps) and sends every
-record to the collector's private socket in `ipc.socket_dir` instead of the log. The
-collector is not built yet, so for now those records are dropped and counted
+record to the collector's private socket in `ipc.socket_dir` instead of the log. When
+the collector is not running, those records are dropped and counted
 (`captures_dropped_ipc_unavailable`).
 `llmfw-setup profile` writes the configuration profile that points Claude at it, and
 `llmfw-setup certs` creates the certificates that decryption will use, and
-`llmfw-setup trust` trusts the CA in the login Keychain. Installing (LaunchAgents) and
-the collector are not built yet.
+`llmfw-setup trust` trusts the CA in the login Keychain. Installing (LaunchAgents) is
+not built yet.
 
 Prerequisites (macOS, Apple Clang 15 or newer, C++20):
 
@@ -485,10 +485,13 @@ ctest --test-dir proxy/build-asan --output-on-failure
 
 ### The collector
 
-So far the collector receives the proxy's records on its socket and counts them: by
-kind, capture-id gaps, and the proxy's own drop and error counters. It logs a summary
-to stderr every minute and when it stops. It does not parse or store anything yet. It
-needs JDK 21 (for example `brew install openjdk@21`); the Gradle wrapper downloads
+So far the collector receives the proxy's records on its socket, decodes and parses
+the HTTP bodies, labels their text by source, and runs the built-in regex PII
+patterns over it. It only counts what it sees: records by kind, capture-id gaps, the
+proxy's own drop and error counters, parse failures, unknown endpoints and schema
+drift, segments by source, and detections by subtype. It logs a summary of the counts
+to stderr every minute and when it stops. It stores nothing yet, and the injection and
+exfil detectors are not built. It needs JDK 21 (for example `brew install openjdk@21`); the Gradle wrapper downloads
 Gradle 9.0.0 on first use.
 
 ```sh
