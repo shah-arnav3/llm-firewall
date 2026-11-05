@@ -21,7 +21,10 @@ class BuiltinPiiPatternsTest {
 
     @Test
     void listsTheCatalogInOrder() {
-        assertEquals(List.of("email", "phone", "us_ssn", "credit_card"), BuiltinPiiPatterns.allNames());
+        assertEquals(List.of("email", "phone", "us_ssn", "credit_card", "anthropic_api_key", "openai_api_key",
+                             "aws_access_key_id", "aws_secret_access_key", "github_token", "slack_token",
+                             "private_key_block", "jwt"),
+                     BuiltinPiiPatterns.allNames());
     }
 
     @Test
@@ -69,5 +72,56 @@ class BuiltinPiiPatternsTest {
     void creditCardIgnoresRunsOfShortNumbers() {
         // 18 digits that pass Luhn, but not in a card layout.
         assertEquals(List.of(), hits("000-12-3456 666-12-3456"));
+    }
+
+    // Secret-shaped fixtures are assembled at run time so that secret scanners do not
+    // flag this file.
+
+    @Test
+    void detectsAnthropicAndOpenAiKeys() {
+        final String anthropic = "sk-" + "ant-api03-" + "Ab_cD-ef".repeat(4);
+        final String openAiLegacy = "sk-" + "Abcdef".repeat(8);
+        final String openAiProject = "sk-" + "proj-" + "Ab_cD-ef".repeat(4);
+        assertEquals(List.of("anthropic_api_key=" + anthropic), hits("key: " + anthropic));
+        assertEquals(List.of("openai_api_key=" + openAiLegacy, "openai_api_key=" + openAiProject),
+                     hits(openAiLegacy + " " + openAiProject));
+        assertEquals(List.of(), hits("risk-free task-runner sk-short"));
+    }
+
+    @Test
+    void detectsAwsKeyIdAndAnchoredSecret() {
+        final String keyId = "AKIA" + "ABCDEFGHIJKLMNOP";
+        final String secret = "abcdEFGH/ijklMNOP+qrstUVWXyzabCDEFghijKLMN".substring(0, 40);
+        assertEquals(List.of("aws_access_key_id=" + keyId), hits("id " + keyId + " ok"));
+        assertEquals(List.of("aws_secret_access_key=" + secret), hits("AWS_SECRET_ACCESS_KEY=\"" + secret + "\""));
+        assertEquals(List.of("aws_secret_access_key=" + secret), hits("aws_secret_key: " + secret));
+        // The same 40 characters without a key name, or as part of a longer string, are not reported.
+        assertEquals(List.of(), hits("hash " + secret));
+        assertEquals(List.of(), hits("secret_access_key=" + secret + "XY"));
+    }
+
+    @Test
+    void detectsGithubAndSlackTokens() {
+        final String classic = "gh" + "p_" + "Abcdef".repeat(6);
+        final String fineGrained = "github" + "_pat_" + "Ab_cdef".repeat(4);
+        final String slack = "xo" + "xb-" + "1234-5678-AbCdEf";
+        assertEquals(List.of("github_token=" + classic, "github_token=" + fineGrained),
+                     hits(classic + " " + fineGrained));
+        assertEquals(List.of("slack_token=" + slack), hits("token " + slack));
+        assertEquals(List.of(), hits("gh" + "p_short xo" + "xz-1234567890"));
+    }
+
+    @Test
+    void detectsPrivateKeyBlockAndJwt() {
+        final String block = "-----BEGIN " + "RSA PRIVATE KEY-----\nMIIEabc\n-----END " + "RSA PRIVATE KEY-----";
+        assertEquals(List.of("private_key_block=" + block), hits("key:\n" + block + "\ndone"));
+        final String cutOff = "-----BEGIN " + "PRIVATE KEY-----\nMIIEabc";
+        assertEquals(List.of("private_key_block=" + cutOff), hits("pasted " + cutOff));
+        assertEquals(List.of(), hits("-----BEGIN PUBLIC KEY-----\nMIIBabc\n-----END PUBLIC KEY-----"));
+
+        final String jwt = "eyJhbGciOiJIUzI1NiJ9" + ".eyJzdWIiOiJ4In0" + ".c2lnbmF0dXJl";
+        final String unsigned = "eyJhbGciOiJub25lIn0" + ".eyJzdWIiOiJ4In0" + ".";
+        assertEquals(List.of("jwt=" + jwt, "jwt=" + unsigned), hits("Bearer " + jwt + " or " + unsigned));
+        assertEquals(List.of(), hits("eyJhbGciOiJIUzI1NiJ9.notjson.sig"));
     }
 }
