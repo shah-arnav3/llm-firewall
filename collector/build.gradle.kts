@@ -30,6 +30,8 @@ dependencies {
     implementation("org.brotli:dec:0.1.2")
     // Content-Encoding: zstd. The reference C decoder (continuously fuzzed by OSS-Fuzz) over JNI.
     implementation("com.github.luben:zstd-jni:1.5.7-23")
+    // PII patterns, built-in and user-supplied. Linear-time matching, so no pattern can hang a worker.
+    implementation("com.google.re2j:re2j:1.8")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
