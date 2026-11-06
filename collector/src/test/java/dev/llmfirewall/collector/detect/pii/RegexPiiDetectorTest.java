@@ -38,7 +38,7 @@ class RegexPiiDetectorTest {
         final List<Detection> found = new RegexPiiDetector(List.of(pattern("employee_id", "EMP-\\d{4}"))).detect(s);
         assertEquals(List.of("employee_id=EMP-1234", "employee_id=EMP-5678"), hits(found));
         final Detection first = found.get(0);
-        assertEquals(new Detection("regex-pii", 1, FindingCategory.PII, "employee_id", s, 7, 15, 1.0), first);
+        assertEquals(new Detection("regex-pii", 2, FindingCategory.PII, "employee_id", s, 7, 15, 1.0), first);
     }
 
     @Test

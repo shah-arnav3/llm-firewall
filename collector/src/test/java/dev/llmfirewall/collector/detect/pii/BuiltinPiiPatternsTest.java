@@ -54,6 +54,13 @@ class BuiltinPiiPatternsTest {
     }
 
     @Test
+    void phoneNeedsSeparatorsUnlessItStartsWithPlus() {
+        assertEquals(List.of(), hits("{\"id\":5552345678,\"n\":\"5552345678\"}"));
+        assertEquals(List.of(), hits("555 2345678"));
+        assertEquals(List.of("phone=(555)234-5678", "phone=555-234-5678"), hits("(555)234-5678 555-234-5678"));
+    }
+
+    @Test
     void detectsValidSsnAndRejectsReservedAreas() {
         assertEquals(List.of("us_ssn=123-45-6789", "us_ssn=078 05 1120"), hits("123-45-6789 and 078 05 1120"));
         assertEquals(List.of(), hits("000-12-3456 666-12-3456 900-12-3456 123-00-4567 123-45-0000"));

@@ -17,7 +17,7 @@ import java.util.List;
 public final class RegexPiiDetector implements Detector {
 
     public static final String NAME = "regex-pii";
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
 
     private final List<PiiPattern> patterns;
 

@@ -13,7 +13,9 @@ import java.util.Optional;
  * <ul>
  *   <li>{@code email}</li>
  *   <li>{@code phone}: E.164 ({@code +} and 7 to 15 digits, optionally separated) and
- *       NANP ({@code (555) 234-5678}, {@code 555.234.5678}, ...) forms</li>
+ *       formatted NANP ({@code (555) 234-5678}, {@code 555.234.5678}, ...) forms. A bare
+ *       10-digit NANP number is not reported, because IDs and counters in telemetry
+ *       look the same.</li>
  *   <li>{@code us_ssn}: {@code AAA-GG-SSSS} with dashes or spaces. Excludes the 000, 666
  *       and 9xx area numbers and the all-zero group and serial, which are never issued.</li>
  *   <li>{@code credit_card}: card layouts (13 to 19 unbroken digits; 4-4-4-4 plus up to
@@ -46,7 +48,7 @@ public final class BuiltinPiiPatterns {
     static {
         add("email", "[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}\\b", null, 0);
         add("phone", "(?:^|[^\\w+])(\\+[1-9](?:[ .-]?\\d){6,14}"
-                     + "|\\(?[2-9]\\d{2}\\)?[ .-]?[2-9]\\d{2}[ .-]?\\d{4})\\b", null, 1);
+                     + "|(?:\\([2-9]\\d{2}\\)[ .-]?|[2-9]\\d{2}[ .-])[2-9]\\d{2}[ .-]\\d{4})\\b", null, 1);
         add("us_ssn", "\\b(?:0(?:0[1-9]|[1-9]\\d)|[1-578]\\d\\d|6(?:[0-57-9]\\d|6[0-57-9]))"
                       + "[- ](?:0[1-9]|[1-9]\\d)[- ](?:000[1-9]|00[1-9]\\d|0[1-9]\\d\\d|[1-9]\\d{3})\\b", null, 0);
         add("credit_card", "\\b(?:\\d{13,19}|\\d{4}(?:[ -]\\d{4}){3}(?:[ -]?\\d{1,3})?|\\d{4}[ -]\\d{6}[ -]\\d{4,5})\\b",
