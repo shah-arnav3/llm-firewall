@@ -40,6 +40,7 @@ class ClaudeAiCompletionAdapterTest {
              "attachments":[{"file_name":"notes.txt","extracted_content":"meeting notes"}],
              "sync_sources":[{"title":"Drive doc"}],
              "turn_message_uuids":{"human_message_uuid":"h","assistant_message_uuid":"a"},
+             "parent_message_uuid":"00000000-0000-4000-8000-000000000000",
              "create_conversation_params":{"name":"","model":"claude-opus-5-5","is_temporary":false,"compass_mode":null},
              "tools":[{"type":"mcp","name":"search","description":"Searches the wiki","mcp_server_url":"https://mcp.example",
                        "needs_approval":true,"input_schema":{"properties":{"q":{"description":"query"}}}}]}

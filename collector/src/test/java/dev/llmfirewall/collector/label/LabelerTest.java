@@ -56,7 +56,7 @@ class LabelerTest {
     @Test
     void routesClaudeAiEndpointsToTheirAdapters() throws ParseException {
         final String base = "/api/organizations/" + ORG + "/chat_conversations/" + CONV;
-        assertEquals("claude-ai.completion@1",
+        assertEquals("claude-ai.completion@2",
                      labeler.label(router.route("claude.ai", "POST", base + "/completion"), json("req", "{\"prompt\":\"p\"}"),
                                    ParsedBody.EMPTY).adapterId());
         final LabeledExchange title = labeler.label(router.route("claude.ai", "POST", base + "/title"),

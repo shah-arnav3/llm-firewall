@@ -17,7 +17,7 @@ import java.util.TreeSet;
 
 /**
  * claude.ai {@code .../chat_conversations/{conv}/completion}, the app's chat endpoint
- * (mapping v1, from the 2026-10-30 schema survey). Requests:
+ * (mapping v2, from the schema survey and live runs). Requests:
  * <ul>
  *   <li>{@code prompt}: USER_TYPED, the text typed into the prompt box.</li>
  *   <li>every string in {@code attachments}: ATTACHMENT.</li>
@@ -35,10 +35,10 @@ import java.util.TreeSet;
 public final class ClaudeAiCompletionAdapter {
 
     public static final String ID = "claude-ai.completion";
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
 
     private static final Set<String> METADATA = Set.of("model", "completion_request_id", "effort", "files", "locale",
-        "rendering_mode", "thinking_mode", "timezone", "turn_message_uuids");
+        "parent_message_uuid", "rendering_mode", "thinking_mode", "timezone", "turn_message_uuids");
     private static final Set<String> TOOL_METADATA = Set.of("name", "type", "backend_execution", "integration_name",
         "is_mcp_app", "mcp_server_url", "mcp_server_uuid", "needs_approval", "read_only_hint");
     private static final Set<String> CONVERSATION_METADATA = Set.of("chat_memory_mode", "compass_mode", "enabled_imagine",
