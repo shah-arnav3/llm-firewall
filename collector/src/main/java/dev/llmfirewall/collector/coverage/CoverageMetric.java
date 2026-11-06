@@ -47,7 +47,10 @@ public enum CoverageMetric {
     STATIC_ASSETS_SKIPPED,
     /** Segments not scanned because the same text was already scanned in that conversation. */
     SEGMENTS_DEDUPLICATED,
-    /** Detector hits after merging; a stand-in until findings are stored [category subtype source]. */
+    /**
+     * Detector hits after merging; a stand-in until findings are stored [category subtype
+     * source endpoint]. The endpoint is the route name, or {@code unknown}.
+     */
     DETECTIONS,
     /** Detectors that threw on a segment, which then has no hits from them [detector name]. */
     DETECTOR_FAILURE,

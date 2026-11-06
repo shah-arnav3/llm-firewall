@@ -47,8 +47,8 @@ import java.util.stream.Collectors;
  * failures and skipped media types), routes the request, surveys the bodies' JSON shape
  * on routed endpoints, labels their text (which counts unknown endpoints, schema drift,
  * adapter failures and segments by source), runs the built-in regex PII patterns over
- * the segments (counting detections by category, subtype and source), records coverage
- * (capture-id gaps and the proxy's own stats), and logs both every
+ * the segments (counting detections by category, subtype, source and endpoint name),
+ * records coverage (capture-id gaps and the proxy's own stats), and logs both every
  * {@code summaryInterval} and at close. Parsed bodies, segments and detections are
  * dropped once counted. Log lines hold counts, metric names, media types, failure
  * codes, endpoint names, JSON key paths with value types, detector subtypes and
@@ -161,8 +161,10 @@ public final class Collector implements AutoCloseable {
         for (Segment segment : labeled.result().segments()) {
             coverage.increment(CoverageMetric.SEGMENTS_LABELED, segment.source() + " " + segment.direction());
         }
+        final String endpointName = endpoint.known() ? endpoint.name() : "unknown";
         for (Detection d : detection.detect(labeled)) {
-            coverage.increment(CoverageMetric.DETECTIONS, d.category() + " " + d.subtype() + " " + d.segment().source());
+            coverage.increment(CoverageMetric.DETECTIONS,
+                               d.category() + " " + d.subtype() + " " + d.segment().source() + " " + endpointName);
         }
     }
 
