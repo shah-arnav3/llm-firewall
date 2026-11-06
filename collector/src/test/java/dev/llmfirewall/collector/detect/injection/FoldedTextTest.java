@@ -19,32 +19,32 @@ class FoldedTextTest {
     @Test
     void foldsCaseWidthAndCompatibilityForms() {
         assertEquals("ignore previous", FoldedText.of("IGNORE Previous").text());
-        assertEquals("ignore", FoldedText.of("ｉｇｎｏｒｅ").text());        // Fullwidth.
-        assertEquals("ignore", FoldedText.of("𝐢gnore").text()); // Mathematical bold small i.
-        assertEquals("find", FoldedText.of("ﬁnd").text());            // The fi ligature.
-        assertEquals("a b", FoldedText.of("a b").text());              // No-break space.
+        assertEquals("ignore", FoldedText.of("ｉｇｎｏｒｅ").text());                  // Fullwidth.
+        assertEquals("ignore", FoldedText.of("\uD835\uDC22gnore").text());       // Mathematical bold small i.
+        assertEquals("find", FoldedText.of("\uFB01nd").text());                  // The fi ligature.
+        assertEquals("a b", FoldedText.of("a\u00A0b").text());                   // No-break space.
     }
 
     @Test
     void dropsFormatCharacters() {
-        assertEquals("ignore", FoldedText.of("ig​no‍re").text());         // Zero-width space and joiner.
-        assertEquals("ignore", FoldedText.of("‮ignore‬").text());          // Bidi override.
-        assertEquals("ignore", FoldedText.of("ignore󠁁󠁂").text()); // Tag characters.
+        assertEquals("ignore", FoldedText.of("ig\u200Bno\u200Dre").text());      // Zero-width space and joiner.
+        assertEquals("ignore", FoldedText.of("\u202Eignore\u202C").text());      // Bidi override.
+        assertEquals("ignore", FoldedText.of("ignore\uDB40\uDC41\uDB40\uDC42").text()); // Tag characters.
     }
 
     @Test
     void mapsMatchesBackToTheOriginal() {
         assertEquals("ｉｇｎｏｒｅ", originalOf("please ｉｇｎｏｒｅ this", "ignore"));
-        assertEquals("ig​nore", originalOf("x ig​nore y", "ignore"));
+        assertEquals("ig\u200Bnore", originalOf("x ig\u200Bnore y", "ignore"));
         // One original code point that folds to two units maps back whole, from either unit.
-        assertEquals("ﬁ", originalOf("aﬁb", "f"));
-        assertEquals("ﬁ", originalOf("aﬁb", "i"));
-        assertEquals("𝐢", originalOf("𝐢gnore", "i"));
+        assertEquals("\uFB01", originalOf("a\uFB01b", "f"));
+        assertEquals("\uFB01", originalOf("a\uFB01b", "i"));
+        assertEquals("\uD835\uDC22", originalOf("\uD835\uDC22gnore", "i"));
     }
 
     @Test
     void mapsEmptySpans() {
-        final FoldedText f = FoldedText.of("a​b");
+        final FoldedText f = FoldedText.of("a\u200Bb");
         assertArrayEquals(new int[] {0, 0}, f.originalSpan(0, 0));
         assertArrayEquals(new int[] {3, 3}, f.originalSpan(2, 2));
         assertThrows(IndexOutOfBoundsException.class, () -> f.originalSpan(1, 3));
