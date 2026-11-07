@@ -107,8 +107,9 @@ class DetectionEngineTest {
     }
 
     @Test
-    void serverToolResultGetsInjectionOnly() {
+    void serverToolResultGetsInjectionInBothDirections() {
         assertEquals(List.of("injection"), routedTo(Source.SERVER_TOOL_RESULT, Direction.INBOUND));
+        assertEquals(List.of("pii", "injection"), routedTo(Source.SERVER_TOOL_RESULT, Direction.OUTBOUND));
     }
 
     @Test
@@ -123,8 +124,10 @@ class DetectionEngineTest {
     }
 
     @Test
-    void unknownInboundGetsInjectionOnly() {
-        assertEquals(List.of("injection"), routedTo(Source.UNKNOWN, Direction.INBOUND));
+    void inboundTextOtherThanServerToolResultsGetsNoInjectionScan() {
+        assertEquals(List.of(), routedTo(Source.UNKNOWN, Direction.INBOUND));
+        assertEquals(List.of(), routedTo(Source.ATTACHMENT, Direction.INBOUND));
+        assertEquals(List.of(), routedTo(Source.TOOL_RESULT, Direction.INBOUND));
     }
 
     @Test

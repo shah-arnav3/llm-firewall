@@ -9,13 +9,19 @@ package dev.llmfirewall.collector.label;
  *  ATTACHMENT          outbound         yes   yes         -
  *  TOOL_RESULT         outbound         yes   yes         -
  *  SERVER_TOOL_RESULT  inbound          -     yes         -
+ *  SERVER_TOOL_RESULT  outbound         yes   yes         -
  *  MODEL_OUTPUT        inbound          -     -           yes
  *  UNKNOWN             outbound         yes   yes         -
- *  UNKNOWN             inbound          -     yes         -
+ *  UNKNOWN             inbound          -     -           -
  * </pre>
  *
+ * Injection is scanned on outbound text because a request is how text enters the
+ * model's context; inbound copies are either re-sent (and scanned then) or never reach
+ * it. Server tool results are the exception: the server adds them to the context
+ * without the client re-sending them, so they are scanned inbound too.
+ * <p>
  * Adapters must use USER_TYPED only when they are certain the text was typed by the
- * user. When in doubt, use UNKNOWN, which is scanned for everything.
+ * user. When in doubt, use UNKNOWN, which outbound gets both PII and injection scans.
  */
 public enum Source {
     /** Text the user typed into the prompt box (or the CLI prompt). It is trusted for injection purposes. */

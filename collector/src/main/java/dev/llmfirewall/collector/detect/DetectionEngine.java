@@ -21,8 +21,8 @@ import java.util.Set;
  *   <li>Select detector categories from the routing matrix in {@link Source}:
  *       <ul>
  *         <li>PII for OUTBOUND segments of every source except MODEL_OUTPUT;</li>
- *         <li>INJECTION for ATTACHMENT, TOOL_RESULT, SERVER_TOOL_RESULT and UNKNOWN,
- *             never USER_TYPED;</li>
+ *         <li>INJECTION for OUTBOUND ATTACHMENT, TOOL_RESULT and UNKNOWN segments,
+ *             and SERVER_TOOL_RESULT in either direction; never USER_TYPED;</li>
  *         <li>EXFIL for INBOUND MODEL_OUTPUT.</li>
  *       </ul>
  *       Outbound MODEL_OUTPUT (earlier assistant turns that a client re-sends) gets no
@@ -93,7 +93,8 @@ public final class DetectionEngine {
         if (segment.direction() == Direction.OUTBOUND) {
             out.add(FindingCategory.PII);
         }
-        if (source != Source.USER_TYPED) {
+        if (source == Source.SERVER_TOOL_RESULT
+            || (segment.direction() == Direction.OUTBOUND && source != Source.USER_TYPED)) {
             out.add(FindingCategory.INJECTION);
         }
         return out;

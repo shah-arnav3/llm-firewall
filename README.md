@@ -255,12 +255,16 @@ header *names*. It contains no bodies.
 | Direction / source | Detectors |
 |---|---|
 | **Outbound, every source except model output** (`USER_TYPED`, `ATTACHMENT`, `TOOL_RESULT`, `UNKNOWN`) | **PII:** RE2/J regexes for email, phone, US SSN, credit cards (Luhn-checked), API keys/tokens (Anthropic, OpenAI, AWS, GitHub, Slack), private key blocks, JWTs, plus your own custom patterns. A **named-entity model** (ONNX Runtime) for names, addresses, dates of birth and more. OCR of images is phase 2 |
-| **Untrusted content entering Claude's context** (`ATTACHMENT`, `TOOL_RESULT`, `SERVER_TOOL_RESULT`, `UNKNOWN`) | **Injection:** heuristic phrase rules (ignore-previous, role override, fake turn markers, tool coercion, secrecy, exfil instructions). **Hidden-content checks:** Unicode tag characters U+E0000–U+E007F, zero-width and bidi controls, CSS/HTML-hidden text, and large base64/encoded blobs. A **classifier** (Meta Prompt Guard 2, ONNX) over overlapping ~512-token windows, keeping the max score and its location |
+| **Untrusted content entering Claude's context** (outbound `ATTACHMENT`, `TOOL_RESULT` and `UNKNOWN`; `SERVER_TOOL_RESULT` in either direction) | **Injection:** heuristic phrase rules (ignore-previous, role override, fake turn markers, tool coercion, secrecy, exfil instructions). **Hidden-content checks:** Unicode tag characters U+E0000–U+E007F, zero-width and bidi controls, CSS/HTML-hidden text, and large base64/encoded blobs. A **classifier** (Meta Prompt Guard 2, ONNX) over overlapping ~512-token windows, keeping the max score and its location |
 | **Model output** (`MODEL_OUTPUT`) | **Exfil:** markdown images and links to non-allowlisted domains that carry query data |
 
 "Coming in" means entering Claude's context, not the network direction. Attachments
 and local tool results travel *outbound* on the wire, but they are exactly where
-injected instructions come from.
+injected instructions come from. Inbound text is not scanned for injection, because a
+request is how text enters the context: a response that holds a conversation's history
+or the app's own configuration either gets re-sent (and scanned then) or never reaches
+the model. Web-search and other server tool results are the exception, scanned in the
+response, because the server adds them to the context itself.
 
 **Why injection is never scanned on `USER_TYPED`:** you are the principal. Text you
 type is by definition your instruction, not an injection, and scanning it would bury
