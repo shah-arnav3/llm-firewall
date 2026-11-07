@@ -30,7 +30,11 @@ namespace llmfw {
 /// A peer that closes its end never raises SIGPIPE.
 class UnixSocketWriter final : public FrameSink {
  public:
-  static constexpr std::chrono::milliseconds kDefaultSendTimeout{2000};
+  /// Long enough that a collector busy with one large capture is waited for: the drain
+  /// blocks, the capture queue absorbs the backlog, and any overflow is counted as
+  /// captures_dropped_queue_full. Short enough that a hung collector is dropped, and that
+  /// a send blocked during shutdown delays exit by at most this much past the drain's grace.
+  static constexpr std::chrono::milliseconds kDefaultSendTimeout{10'000};
 
   /// `counters` must outlive the writer; stats frames are snapshots of it.
   UnixSocketWriter(IpcConfig cfg, std::string proxy_instance_id, std::string proxy_version,
