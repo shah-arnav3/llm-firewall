@@ -24,14 +24,16 @@ import java.util.List;
  *       the model reads;</li>
  *   <li>{@code encoded_blob}: base64, base64url, hex or percent-encoded runs that decode
  *       to readable text of at least {@code minEncodedBlobChars} bytes; see
- *       {@link EncodedBlobScanner}.</li>
+ *       {@link EncodedBlobScanner};</li>
+ *   <li>{@code html_hidden}: HTML elements styled or marked not to display, and comments,
+ *       holding text; see {@link HtmlHiddenScanner}.</li>
  * </ul>
  * The score is 1.0.
  */
 public final class HiddenContentDetector implements Detector {
 
     public static final String NAME = "hidden-content";
-    public static final int VERSION = 2;
+    public static final int VERSION = 3;
     static final int MIN_ZERO_WIDTH_RUN = 2;
 
     private enum Kind {
@@ -49,6 +51,7 @@ public final class HiddenContentDetector implements Detector {
     }
 
     private final EncodedBlobScanner blobs;
+    private final HtmlHiddenScanner html = new HtmlHiddenScanner();
 
     /** @throws IllegalArgumentException if {@code minEncodedBlobChars} is less than 1 */
     public HiddenContentDetector(int minEncodedBlobChars) {
@@ -93,6 +96,9 @@ public final class HiddenContentDetector implements Detector {
         }
         for (int[] span : blobs.find(text)) {
             out.add(new Detection(NAME, VERSION, FindingCategory.INJECTION, "encoded_blob", segment, span[0], span[1], 1.0));
+        }
+        for (int[] span : html.find(text)) {
+            out.add(new Detection(NAME, VERSION, FindingCategory.INJECTION, "html_hidden", segment, span[0], span[1], 1.0));
         }
         return out;
     }
