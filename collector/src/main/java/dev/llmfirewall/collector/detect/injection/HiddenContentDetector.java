@@ -9,8 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Characters a human reviewer would not see, but a model reads. Each maximal run of one
- * kind is one detection, spanning the run. Subtypes:
+ * Content a human reviewer would not see or could not read, but a model reads. Each
+ * maximal run of one kind is one detection, spanning the run. Subtypes:
  * <ul>
  *   <li>{@code unicode_tags}: U+E0000–U+E007F, which can spell out a whole instruction
  *       invisibly;</li>
@@ -21,14 +21,17 @@ import java.util.List;
  *       drops it before the phrase rules run;</li>
  *   <li>{@code bidi_control}: the embedding, override and isolate controls U+202A–U+202E
  *       and U+2066–U+2069, which can make text display in a different order from the one
- *       the model reads.</li>
+ *       the model reads;</li>
+ *   <li>{@code encoded_blob}: base64, base64url, hex or percent-encoded runs that decode
+ *       to readable text of at least {@code minEncodedBlobChars} bytes; see
+ *       {@link EncodedBlobScanner}.</li>
  * </ul>
  * The score is 1.0.
  */
 public final class HiddenContentDetector implements Detector {
 
     public static final String NAME = "hidden-content";
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
     static final int MIN_ZERO_WIDTH_RUN = 2;
 
     private enum Kind {
@@ -43,6 +46,13 @@ public final class HiddenContentDetector implements Detector {
             this.subtype = subtype;
             this.minRun = minRun;
         }
+    }
+
+    private final EncodedBlobScanner blobs;
+
+    /** @throws IllegalArgumentException if {@code minEncodedBlobChars} is less than 1 */
+    public HiddenContentDetector(int minEncodedBlobChars) {
+        this.blobs = new EncodedBlobScanner(minEncodedBlobChars);
     }
 
     @Override
@@ -80,6 +90,9 @@ public final class HiddenContentDetector implements Detector {
             }
             runLength++;
             i += cp < 0 ? 1 : Character.charCount(cp);
+        }
+        for (int[] span : blobs.find(text)) {
+            out.add(new Detection(NAME, VERSION, FindingCategory.INJECTION, "encoded_blob", segment, span[0], span[1], 1.0));
         }
         return out;
     }
