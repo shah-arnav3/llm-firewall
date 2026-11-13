@@ -491,12 +491,13 @@ ctest --test-dir proxy/build-asan --output-on-failure
 
 So far the collector receives the proxy's records on its socket, decodes and parses
 the HTTP bodies, labels their text by source, and runs the built-in regex PII
-patterns, the injection phrase heuristics and the hidden-content checks (invisible
-characters, encoded blobs and CSS/HTML-hidden text) over it. It only counts what it sees: records by
+patterns, the injection phrase heuristics, the hidden-content checks (invisible
+characters, encoded blobs and CSS/HTML-hidden text) and the exfil link detector over
+it. It only counts what it sees: records by
 kind, capture-id gaps, the proxy's own drop and error counters, parse failures,
 unknown endpoints and schema drift, segments by source, and detections by subtype. It
 logs a summary of the counts to stderr every minute and when it stops. It stores
-nothing yet. The injection classifier and the exfil detector are not built.
+nothing yet, and the injection classifier is not built.
 It needs JDK 21 (for example `brew install openjdk@21`); the Gradle wrapper downloads
 Gradle 9.0.0 on first use.
 

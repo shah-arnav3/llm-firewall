@@ -8,6 +8,7 @@ import dev.llmfirewall.collector.coverage.ProxyStatsRecorder;
 import dev.llmfirewall.collector.detect.Detection;
 import dev.llmfirewall.collector.detect.DetectionEngine;
 import dev.llmfirewall.collector.detect.SegmentDeduplicator;
+import dev.llmfirewall.collector.detect.exfil.ExfilLinkDetector;
 import dev.llmfirewall.collector.detect.injection.HeuristicPhraseDetector;
 import dev.llmfirewall.collector.detect.injection.HiddenContentDetector;
 import dev.llmfirewall.collector.detect.pii.BuiltinPiiPatterns;
@@ -38,6 +39,7 @@ import java.time.Duration;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -49,10 +51,10 @@ import java.util.stream.Collectors;
  * failures and skipped media types), routes the request, surveys the bodies' JSON shape
  * on routed endpoints, labels their text (which counts unknown endpoints, schema drift,
  * adapter failures and segments by source), runs the built-in regex PII patterns, the
- * injection phrase heuristics and the hidden-content checks over the segments
- * (counting detections by category, subtype, source and endpoint name), records
- * coverage (capture-id gaps and the proxy's own stats), and logs both every
- * {@code summaryInterval} and at close. Parsed bodies, segments and detections are
+ * injection phrase heuristics, the hidden-content checks and the exfil link detector
+ * over the segments (counting detections by category, subtype, source and endpoint
+ * name), records coverage (capture-id gaps and the proxy's own stats), and logs both
+ * every {@code summaryInterval} and at close. Parsed bodies, segments and detections are
  * dropped once counted. Log lines hold counts, metric names, media types, failure
  * codes, endpoint names, JSON key paths with value types, detector subtypes and
  * segment locations, and proxy instance ids only, never capture content.
@@ -67,6 +69,8 @@ public final class Collector implements AutoCloseable {
     static final int JSON_MAX_STRING_LENGTH = 32 << 20;
     static final int DEDUP_CACHE_ENTRIES = 100_000;
     static final int MIN_ENCODED_BLOB_CHARS = 512;
+    static final Set<String> EXFIL_ALLOWLISTED_DOMAINS = Set.of("claude.ai", "anthropic.com", "github.com", "wikipedia.org");
+    static final int EXFIL_MIN_QUERY_CHARS = 16;
 
     private static final System.Logger LOG = System.getLogger(Collector.class.getName());
 
@@ -91,7 +95,9 @@ public final class Collector implements AutoCloseable {
         this.labeler = new Labeler(new AnthropicMessagesAdapter(new SseReplyAssembler(json)), coverage);
         this.detection = new DetectionEngine(
             List.of(new RegexPiiDetector(BuiltinPiiPatterns.select(BuiltinPiiPatterns.allNames()))),
-            List.of(new HeuristicPhraseDetector(), new HiddenContentDetector(MIN_ENCODED_BLOB_CHARS)), List.of(), new SegmentDeduplicator(DEDUP_CACHE_ENTRIES), coverage);
+            List.of(new HeuristicPhraseDetector(), new HiddenContentDetector(MIN_ENCODED_BLOB_CHARS)),
+            List.of(new ExfilLinkDetector(EXFIL_ALLOWLISTED_DOMAINS, EXFIL_MIN_QUERY_CHARS)),
+            new SegmentDeduplicator(DEDUP_CACHE_ENTRIES), coverage);
         this.receiver = new CaptureReceiver(config.ipc().socketDir(), config.ipc().socketName(),
                                             new FrameDecoder(config.ipc().maxFrameBytes()),
                                             new CaptureGapTracker(coverage), coverage, new CaptureReceiver.Sink() {
